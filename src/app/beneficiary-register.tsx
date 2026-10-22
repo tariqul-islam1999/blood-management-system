@@ -11,11 +11,13 @@ import {
   Image,
   Keyboard,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
-
+import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { supabase } from '../lib/supabase';
 
 // ========== TYPES ==========
 
@@ -42,6 +44,7 @@ const PASSWORD_REGEX =
 // ========== MAIN COMPONENT ==========
 
 export default function BeneficiaryRegisterScreen() {
+  const router = useRouter();
 
   // Personal information
   const [name, setName] = useState('');
@@ -50,12 +53,9 @@ export default function BeneficiaryRegisterScreen() {
 
   // Passwords
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] =
-    useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  const [showPassword, setShowPassword] =
-    useState(false);
-
+  const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] =
     useState(false);
 
@@ -71,6 +71,9 @@ export default function BeneficiaryRegisterScreen() {
   // Validation errors
   const [errors, setErrors] = useState<FormErrors>({});
 
+  // Registration loading
+  const [isRegistering, setIsRegistering] = useState(false);
+
   // ========== CLEAR ERROR ==========
 
   const clearError = (field: FormField) => {
@@ -83,6 +86,8 @@ export default function BeneficiaryRegisterScreen() {
   // ========== PROFILE PICTURE ==========
 
   const pickProfileImage = async () => {
+    if (isRegistering) return;
+
     try {
       const result =
         await ImagePicker.launchImageLibraryAsync({
@@ -126,11 +131,14 @@ export default function BeneficiaryRegisterScreen() {
         return;
       }
 
-      if (photo.fileSize > MAX_IMAGE_SIZE) {
+      if (
+        photo.fileSize <= 0 ||
+        photo.fileSize > MAX_IMAGE_SIZE
+      ) {
         setErrors((previous) => ({
           ...previous,
           profileImage:
-            'Photo must be 5 MB or smaller.',
+            'Photo must be valid and 5 MB or smaller.',
         }));
         return;
       }
@@ -150,7 +158,6 @@ export default function BeneficiaryRegisterScreen() {
   // ========== FORM VALIDATION ==========
 
   const validateForm = (): boolean => {
-
     const newErrors: FormErrors = {};
 
     // Profile picture
@@ -238,9 +245,10 @@ export default function BeneficiaryRegisterScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
-  // ========== SUBMIT ==========
+  // ========== REAL SUPABASE REGISTRATION ==========
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
+    if (isRegistering) return;
 
     Keyboard.dismiss();
 
@@ -248,10 +256,85 @@ export default function BeneficiaryRegisterScreen() {
       return;
     }
 
-    Alert.alert(
-      'Validation Successful',
-      'All beneficiary information is valid. This is a demo form. Supabase registration will be added later.'
-    );
+    setIsRegistering(true);
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password: password,
+        options: {
+          data: {
+            role: 'beneficiary',
+            full_name: name.trim(),
+            phone: phone.trim(),
+            district: district.trim(),
+            thana: thana.trim(),
+            local_area: localArea.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data.user) {
+        throw new Error(
+          'Registration could not be completed. Please try again.'
+        );
+      }
+
+      // Supabase may return an obfuscated user for
+      // an email that is already registered.
+      if (data.user.identities?.length === 0) {
+        Alert.alert(
+          'Check Your Email',
+          'If this email is eligible for registration, ' +
+          'you will receive verification instructions.'
+        );
+        return;
+      }
+
+      if (!data.session) {
+        Alert.alert(
+          'Check Your Email',
+          'Please check your inbox and verify your email address.\n\n' +
+          'After verification, return to the Login page.\n\n' +
+          'Your profile photo will be uploaded after login.',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/login'),
+            },
+          ]
+        );
+      } else {
+        // Email confirmation settings can vary.
+        Alert.alert(
+          'Registration Submitted',
+          'Your registration request was accepted.\n\n' +
+          'You can now continue to Login.\n\n' +
+          'Profile photo upload will be completed after login.',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/login'),
+            },
+          ]
+        );
+      }
+
+    } catch (error) {
+      Alert.alert(
+        'Registration Failed',
+        error instanceof Error
+          ? error.message
+          : 'Something went wrong. Please try again.'
+      );
+
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   // ========== USER INTERFACE ==========
@@ -280,7 +363,10 @@ export default function BeneficiaryRegisterScreen() {
 
         <View style={styles.photoContainer}>
 
-          <Pressable onPress={pickProfileImage}>
+          <Pressable
+            onPress={pickProfileImage}
+            disabled={isRegistering}
+          >
             {profileImage ? (
               <Image
                 source={{ uri: profileImage }}
@@ -299,7 +385,10 @@ export default function BeneficiaryRegisterScreen() {
             )}
           </Pressable>
 
-          <Pressable onPress={pickProfileImage}>
+          <Pressable
+            onPress={pickProfileImage}
+            disabled={isRegistering}
+          >
             <Text style={styles.uploadText}>
               {profileImage
                 ? 'Change Profile Photo'
@@ -331,6 +420,7 @@ export default function BeneficiaryRegisterScreen() {
             errors.name && styles.inputError,
           ]}
           placeholder="Enter your full name"
+          editable={!isRegistering}
           value={name}
           onChangeText={(value) => {
             setName(value);
@@ -359,6 +449,7 @@ export default function BeneficiaryRegisterScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
+          editable={!isRegistering}
           value={email}
           onChangeText={(value) => {
             setEmail(value);
@@ -391,6 +482,7 @@ export default function BeneficiaryRegisterScreen() {
             secureTextEntry={!showPassword}
             autoCapitalize="none"
             autoCorrect={false}
+            editable={!isRegistering}
             value={password}
             onChangeText={(value) => {
               setPassword(value);
@@ -401,6 +493,7 @@ export default function BeneficiaryRegisterScreen() {
 
           <Pressable
             style={styles.visibilityButton}
+            disabled={isRegistering}
             onPress={() =>
               setShowPassword(!showPassword)
             }
@@ -443,6 +536,7 @@ export default function BeneficiaryRegisterScreen() {
             secureTextEntry={!showConfirmPassword}
             autoCapitalize="none"
             autoCorrect={false}
+            editable={!isRegistering}
             value={confirmPassword}
             onChangeText={(value) => {
               setConfirmPassword(value);
@@ -452,6 +546,7 @@ export default function BeneficiaryRegisterScreen() {
 
           <Pressable
             style={styles.visibilityButton}
+            disabled={isRegistering}
             onPress={() =>
               setShowConfirmPassword(
                 !showConfirmPassword
@@ -487,6 +582,7 @@ export default function BeneficiaryRegisterScreen() {
           placeholder="017XXXXXXXX"
           keyboardType="phone-pad"
           maxLength={11}
+          editable={!isRegistering}
           value={phone}
           onChangeText={(value) => {
             setPhone(value);
@@ -524,6 +620,7 @@ export default function BeneficiaryRegisterScreen() {
           ]}
           placeholder="e.g. Dhaka"
           autoCapitalize="words"
+          editable={!isRegistering}
           value={district}
           onChangeText={(value) => {
             setDistrict(value);
@@ -550,6 +647,7 @@ export default function BeneficiaryRegisterScreen() {
           ]}
           placeholder="e.g. Mirpur"
           autoCapitalize="words"
+          editable={!isRegistering}
           value={thana}
           onChangeText={(value) => {
             setThana(value);
@@ -576,6 +674,7 @@ export default function BeneficiaryRegisterScreen() {
           ]}
           placeholder="e.g. Mirpur-10"
           autoCapitalize="words"
+          editable={!isRegistering}
           value={localArea}
           onChangeText={(value) => {
             setLocalArea(value);
@@ -592,20 +691,29 @@ export default function BeneficiaryRegisterScreen() {
         {/* SUBMIT BUTTON */}
 
         <Pressable
-          style={styles.registerButton}
+          style={[
+            styles.registerButton,
+            isRegistering && styles.disabledButton,
+          ]}
           onPress={handleRegister}
+          disabled={isRegistering}
         >
-          <Text style={styles.registerText}>
-            Validate Beneficiary Form
-          </Text>
+          {isRegistering ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.registerText}>
+              Register as Beneficiary
+            </Text>
+          )}
         </Pressable>
 
-        {/* DEMO NOTICE */}
+        {/* INFORMATION NOTE */}
 
         <Text style={styles.note}>
-          This is a demo form.
-          No real account is created yet.
-          Supabase authentication will be added later.
+          Email verification is required before login.
+          {'\n'}
+          Your selected photo will need to be uploaded
+          again after login.
         </Text>
 
       </ScrollView>
@@ -773,6 +881,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 35,
+  },
+
+  disabledButton: {
+    opacity: 0.6,
   },
 
   registerText: {

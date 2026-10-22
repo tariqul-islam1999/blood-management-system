@@ -33,11 +33,9 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
 
   const [showPassword, setShowPassword] = useState(false);
-
   const [rememberMe, setRememberMe] = useState(false);
 
   const [errors, setErrors] = useState<FormErrors>({});
-
   const [isLoading, setIsLoading] = useState(false);
 
   // ========== CLEAR ERRORS ==========
@@ -125,7 +123,7 @@ export default function LoginScreen() {
         return;
       }
 
-      // Get current user's profile from database
+      // Get current user's profile
 
       const { data: profile, error: profileError } =
         await supabase
@@ -158,7 +156,7 @@ export default function LoginScreen() {
         return;
       }
 
-      // Only supported registration roles for now
+      // Check supported roles
 
       if (
         profile.role !== 'donor' &&
@@ -174,19 +172,13 @@ export default function LoginScreen() {
         return;
       }
 
-      // Successful login
+      // ========== ROLE-BASED NAVIGATION ==========
 
       if (profile.role === 'donor') {
-  router.replace('/donor-dashboard');
-} else {
-  Alert.alert(
-    'Login Successful',
-    `Welcome, ${profile.full_name}!\n\n` +
-    'Beneficiary Dashboard will be added later.'
-  );
-}
-
-      // Dashboard navigation will be added later.
+        router.replace('/donor-dashboard');
+      } else if (profile.role === 'beneficiary') {
+        router.replace('/beneficiary-dashboard');
+      }
 
     } catch (error) {
       console.error('Login error:', error);
