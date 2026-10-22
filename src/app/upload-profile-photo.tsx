@@ -1,11 +1,11 @@
-
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   View,
   Text,
   Image,
   Pressable,
+  ScrollView,
   ActivityIndicator,
   Alert,
   StyleSheet,
@@ -22,31 +22,133 @@ const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 type SelectedPhoto = {
   uri: string;
   mimeType: 'image/jpeg' | 'image/png';
+  userId: string;
 };
+
+class PhotoAccessError extends Error {}
+
+type VerifiedPhotoAccess = {
+  userId: string;
+  dashboard: '/donor-dashboard' | '/beneficiary-dashboard';
+};
+
+async function getVerifiedPhotoAccess(): Promise<VerifiedPhotoAccess | null> {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error) {
+    throw new PhotoAccessError('Unable to verify your login. Retry or return to Login.');
+  }
+  if (!data.user) return null;
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role, account_status')
+    .eq('id', data.user.id)
+    .single();
+
+  if (profileError || !profile) {
+    throw new PhotoAccessError('Unable to verify your profile. Please try again.');
+  }
+  if (
+    profile.account_status !== 'active' ||
+    (profile.role !== 'donor' && profile.role !== 'beneficiary')
+  ) {
+    throw new PhotoAccessError('Photo upload requires an active donor or beneficiary account.');
+  }
+
+  return {
+    userId: data.user.id,
+    // Only the authenticated user's database profile determines this route.
+    dashboard:
+      profile.role === 'donor' ? '/donor-dashboard' : '/beneficiary-dashboard',
+  };
+}
 
 export default function UploadProfilePhotoScreen() {
   const router = useRouter();
-
   const [photo, setPhoto] = useState<SelectedPhoto | null>(null);
+  const [access, setAccess] = useState<VerifiedPhotoAccess | null>(null);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [isReturning, setIsReturning] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const mountedRef = useRef(false);
+  const checkIdRef = useRef(0);
+  const isBusy = isUploading || isSelecting || isReturning;
 
-  // ========== CHECK LOGIN ==========
+  const checkAccess = useCallback(async () => {
+    const checkId = ++checkIdRef.current;
+    setIsCheckingAccess(true);
+    setAccess(null);
+    setAccessError(null);
 
-  useEffect(() => {
-    const checkLogin = async () => {
-      const { data, error } = await supabase.auth.getUser();
-
-      setIsLoggedIn(!error && !!data.user);
-    };
-
-    checkLogin();
+    try {
+      const verified = await getVerifiedPhotoAccess();
+      if (!mountedRef.current || checkId !== checkIdRef.current) return;
+      setAccess(verified);
+      setPhoto((previous) =>
+        previous?.userId === verified?.userId ? previous : null
+      );
+    } catch (error) {
+      if (mountedRef.current && checkId === checkIdRef.current) {
+        setPhoto(null);
+        setAccessError(
+          error instanceof PhotoAccessError ? error.message : 'Unable to verify your account. Please retry.'
+        );
+      }
+    } finally {
+      if (mountedRef.current && checkId === checkIdRef.current) {
+        setIsCheckingAccess(false);
+      }
+    }
   }, []);
 
-  // ========== SELECT IMAGE ==========
+  useEffect(() => {
+    mountedRef.current = true;
+    void checkAccess();
+    return () => {
+      mountedRef.current = false;
+      checkIdRef.current += 1;
+    };
+  }, [checkAccess]);
+
+  const returnToDashboard = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setIsReturning(true);
+
+    try {
+      // Re-read the database role even after a successful upload.
+      const verified = await getVerifiedPhotoAccess();
+      if (!mountedRef.current) return;
+      if (!verified) {
+        setAccess(null);
+        setPhoto(null);
+        router.replace('/login');
+        return;
+      }
+      router.replace(verified.dashboard);
+    } catch (error) {
+      if (mountedRef.current) {
+        setAccess(null);
+        setPhoto(null);
+        setAccessError(
+          error instanceof PhotoAccessError ? error.message : 'Unable to verify your dashboard. Please retry.'
+        );
+      }
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setIsReturning(false);
+    }
+  };
 
   const pickImage = async () => {
-    if (isUploading) return;
+    if (!access || busyRef.current) return;
+    busyRef.current = true;
+    setIsSelecting(true);
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -55,254 +157,233 @@ export default function UploadProfilePhotoScreen() {
         aspect: [1, 1],
         quality: 0.8,
       });
-
-      if (result.canceled || !result.assets?.length) {
-        return;
-      }
+      if (!mountedRef.current || result.canceled || !result.assets?.length) return;
 
       const selected = result.assets[0];
       const mimeType = selected.mimeType?.toLowerCase();
-
-      if (
-        mimeType !== 'image/jpeg' &&
-        mimeType !== 'image/png'
-      ) {
-        Alert.alert(
-          'Invalid Photo',
-          'Please select a JPG or PNG image.'
-        );
+      if (mimeType !== 'image/jpeg' && mimeType !== 'image/png') {
+        Alert.alert('Invalid Photo', 'Please select a JPG or PNG image.');
         return;
       }
 
       const localFile = new File(selected.uri);
-
       if (
         !localFile.exists ||
         localFile.size <= 0 ||
         localFile.size > MAX_IMAGE_SIZE
       ) {
-        Alert.alert(
-          'Invalid Photo',
-          'Photo must be valid and 5 MB or smaller.'
-        );
+        Alert.alert('Invalid Photo', 'Photo must be valid and 5 MB or smaller.');
         return;
       }
 
-      setPhoto({
-        uri: selected.uri,
-        mimeType,
-      });
-
-    } catch (error) {
-      Alert.alert(
-        'Photo Selection Failed',
-        'Unable to select the photo. Please try again.'
-      );
+      setPhoto({ uri: selected.uri, mimeType, userId: access.userId });
+    } catch {
+      if (mountedRef.current) {
+        Alert.alert('Photo Selection Failed', 'Unable to select the photo. Please try again.');
+      }
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setIsSelecting(false);
     }
   };
 
-  // ========== UPLOAD IMAGE ==========
-
   const uploadPhoto = async () => {
-    if (!photo || isUploading) return;
-
+    if (!photo || !access || busyRef.current) return;
+    busyRef.current = true;
     setIsUploading(true);
+    setUploadNotice(null);
+    let uploaded = false;
 
     try {
-      const { data: userData, error: userError } =
-        await supabase.auth.getUser();
+      const verified = await getVerifiedPhotoAccess();
+      if (!mountedRef.current) return;
 
-      if (userError || !userData.user) {
-        setIsLoggedIn(false);
-
-        Alert.alert(
-          'Login Required',
-          'Please log in before uploading your profile photo.'
-        );
+      if (!verified) {
+        setAccess(null);
+        setPhoto(null);
+        Alert.alert('Login Required', 'Please log in before uploading your photo.');
+        return;
+      }
+      setAccess(verified);
+      if (verified.userId !== photo.userId) {
+        setPhoto(null);
+        Alert.alert('Account Changed', 'Please select a photo for your current account.');
         return;
       }
 
-      const userId = userData.user.id;
       const localFile = new File(photo.uri);
-
       if (
         !localFile.exists ||
         localFile.size <= 0 ||
         localFile.size > MAX_IMAGE_SIZE
       ) {
-        Alert.alert(
-          'Invalid Photo',
-          'Please select a valid photo under 5 MB.'
-        );
+        Alert.alert('Invalid Photo', 'Please select a valid photo of 5 MB or smaller.');
         return;
       }
 
       const imageData = await localFile.arrayBuffer();
+      if (!mountedRef.current) return;
+      if (imageData.byteLength <= 0 || imageData.byteLength > MAX_IMAGE_SIZE) {
+        Alert.alert('Invalid Photo', 'Please select a valid photo of 5 MB or smaller.');
+        return;
+      }
 
-      const extension =
-        photo.mimeType === 'image/png' ? 'png' : 'jpg';
-
-      const filePath = `${userId}/profile.${extension}`;
-
-      // Upload to private Supabase Storage
+      const extension = photo.mimeType === 'image/png' ? 'png' : 'jpg';
+      const filePath = verified.userId + '/profile.' + extension;
 
       const { error: uploadError } = await supabase.storage
         .from('profile-photos')
         .upload(filePath, imageData, {
           contentType: photo.mimeType,
           upsert: true,
-          cacheControl: '3600',
+          // Replacements should be fetched again rather than cached for an hour.
+          cacheControl: '0',
         });
 
       if (uploadError) {
-        throw new Error(uploadError.message);
+        throw new Error('The upload could not be confirmed. Please check your connection and retry.');
       }
+      uploaded = true;
 
-      // Update profile photo path in database
+      const { error: databaseError } = await supabase.rpc('update_my_profile_photo', {
+        new_photo_path: filePath,
+      });
+      if (databaseError) throw new Error('Profile update could not be confirmed.');
 
-      const { error: databaseError } = await supabase.rpc(
-        'update_my_profile_photo',
-        {
-          new_photo_path: filePath,
+      if (!mountedRef.current) return;
+      setUploadNotice('Your profile photo was saved successfully.');
+      Alert.alert('Upload Successful', 'Your profile photo was saved successfully!', [
+        { text: 'OK', onPress: () => void returnToDashboard() },
+      ]);
+    } catch (error) {
+      if (!mountedRef.current) return;
+
+      if (uploaded) {
+        const message =
+          'The photo was uploaded, but saving its profile link could not be confirmed. ' +
+          'It may already have replaced your previous photo. No automatic rollback occurred. ' +
+          'You can retry uploading to save the profile link again.';
+        setUploadNotice(message);
+        Alert.alert('Photo Uploaded, Profile Update Not Confirmed', message);
+      } else {
+        if (error instanceof PhotoAccessError) {
+          setAccess(null);
+          setPhoto(null);
+          setAccessError(error.message);
         }
-      );
-
-      if (databaseError) {
-        throw new Error(
-          'Photo uploaded, but database update failed: ' +
-          databaseError.message
+        Alert.alert(
+          'Upload Not Completed',
+          error instanceof PhotoAccessError
+            ? error.message
+            : 'The upload could not be confirmed. Please check your connection and retry.'
         );
       }
-
-      // Return to Dashboard after OK
-
-      Alert.alert(
-        'Upload Successful',
-        'Your profile photo was saved successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              router.replace('/donor-dashboard');
-            },
-          },
-        ]
-      );
-
-    } catch (error) {
-      Alert.alert(
-        'Upload Failed',
-        error instanceof Error
-          ? error.message
-          : 'Something went wrong. Please try again.'
-      );
-
     } finally {
-      setIsUploading(false);
+      busyRef.current = false;
+      if (mountedRef.current) setIsUploading(false);
     }
   };
 
-  // ========== SCREEN UI ==========
-
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Profile Photo</Text>
+        <Text style={styles.subtitle}>Upload your profile picture securely</Text>
 
-        <Text style={styles.title}>
-          Profile Photo
-        </Text>
+        {uploadNotice && (
+          <Text style={styles.notice} accessibilityLiveRegion="polite">
+            {uploadNotice}
+          </Text>
+        )}
 
-        <Text style={styles.subtitle}>
-          Upload your profile picture securely
-        </Text>
-
-        {isLoggedIn === null ? (
+        {isCheckingAccess ? (
           <ActivityIndicator
             size="large"
             color="#DC2626"
+            accessibilityLabel="Checking your account"
           />
-        ) : !isLoggedIn ? (
-          <Text style={styles.errorText}>
-            Please log in to upload your photo.
-          </Text>
+        ) : !access ? (
+          <>
+            <Text style={styles.errorText}>
+              {accessError ?? 'Please log in to upload your photo.'}
+            </Text>
+            <Pressable
+              style={styles.selectButton}
+              accessibilityRole="button"
+              onPress={() => void checkAccess()}
+            >
+              <Text style={styles.selectText}>Retry Account Check</Text>
+            </Pressable>
+            <Pressable
+              style={styles.backButton}
+              accessibilityRole="button"
+              onPress={() => router.replace('/login')}
+            >
+              <Text style={styles.backText}>Go to Login</Text>
+            </Pressable>
+          </>
         ) : (
           <>
             <Pressable
-              onPress={pickImage}
-              disabled={isUploading}
+              onPress={() => void pickImage()}
+              disabled={isBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Choose your profile photo"
             >
               {photo ? (
                 <Image
                   source={{ uri: photo.uri }}
                   style={styles.photo}
+                  accessibilityLabel="Selected profile photo preview"
                 />
               ) : (
                 <View style={styles.placeholder}>
-                  <Text style={styles.cameraIcon}>
-                    📷
-                  </Text>
-
-                  <Text style={styles.placeholderText}>
-                    Select Photo
-                  </Text>
+                  <Text style={styles.placeholderText}>Select Photo</Text>
                 </View>
               )}
             </Pressable>
 
-            <Text style={styles.hint}>
-              JPG / PNG — Maximum 5 MB
-            </Text>
-
+            <Text style={styles.hint}>JPG / PNG - Maximum 5 MB</Text>
             <Pressable
               style={styles.selectButton}
-              onPress={pickImage}
-              disabled={isUploading}
+              onPress={() => void pickImage()}
+              disabled={isBusy}
+              accessibilityRole="button"
             >
               <Text style={styles.selectText}>
-                {photo ? 'Change Photo' : 'Choose Photo'}
+                {isSelecting ? 'Opening Photos...' : photo ? 'Change Photo' : 'Choose Photo'}
               </Text>
             </Pressable>
 
             <Pressable
-              style={[
-                styles.uploadButton,
-                (!photo || isUploading) &&
-                  styles.disabledButton,
-              ]}
-              onPress={uploadPhoto}
-              disabled={!photo || isUploading}
+              style={[styles.uploadButton, (!photo || isBusy) && styles.disabledButton]}
+              onPress={() => void uploadPhoto()}
+              disabled={!photo || isBusy}
+              accessibilityRole="button"
             >
               {isUploading ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color="#FFFFFF" accessibilityLabel="Uploading profile photo" />
               ) : (
-                <Text style={styles.uploadText}>
-                  Upload Profile Photo
-                </Text>
+                <Text style={styles.uploadText}>Upload Profile Photo</Text>
               )}
             </Pressable>
 
-            {/* BACK TO DASHBOARD */}
-
             <Pressable
               style={styles.backButton}
-              disabled={isUploading}
-              onPress={() =>
-                router.replace('/donor-dashboard')
-              }
+              disabled={isBusy}
+              onPress={() => void returnToDashboard()}
+              accessibilityRole="button"
             >
               <Text style={styles.backText}>
-                Back to Dashboard
+                {isReturning ? 'Checking Dashboard...' : 'Back to Dashboard'}
               </Text>
             </Pressable>
           </>
         )}
-
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
-
-// ========== STYLES ==========
 
 const styles = StyleSheet.create({
   container: {
@@ -311,7 +392,7 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
@@ -410,6 +491,14 @@ const styles = StyleSheet.create({
     color: '#991B1B',
     fontSize: 14,
     fontWeight: '600',
+  },
+
+  notice: {
+    color: '#374151',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 20,
   },
 
   errorText: {

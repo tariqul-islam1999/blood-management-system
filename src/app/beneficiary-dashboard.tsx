@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import {
   View,
@@ -8,10 +8,12 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
+  Image,
+  ScrollView,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 type BeneficiaryProfile = {
@@ -28,9 +30,20 @@ export default function BeneficiaryDashboardScreen() {
     useState<BeneficiaryProfile | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [isPhotoLoading, setIsPhotoLoading] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const loadIdRef = useRef(0);
 
   const loadProfile = useCallback(async () => {
+    const loadId = ++loadIdRef.current;
+    const isCurrent = () => loadId === loadIdRef.current;
+
     setIsLoading(true);
+    setProfile(null);
+    setPhotoUrl(null);
+    setPhotoError(null);
+    setIsPhotoLoading(false);
 
     try {
       const {
@@ -38,6 +51,7 @@ export default function BeneficiaryDashboardScreen() {
         error: authError,
       } = await supabase.auth.getUser();
 
+      if (!isCurrent()) return;
       if (authError || !user) {
         router.replace('/login');
         return;
@@ -46,22 +60,18 @@ export default function BeneficiaryDashboardScreen() {
       const { data, error } = await supabase
         .from('profiles')
         .select(
-          'full_name, district, thana, local_area, role, account_status'
+          'full_name, district, thana, local_area, role, account_status, profile_photo_path'
         )
         .eq('id', user.id)
         .single();
 
+      if (!isCurrent()) return;
       if (error || !data) {
-        throw new Error('Unable to load your profile.');
+        throw new Error('Unable to load your profile. Please try again.');
       }
-
-      if (
-        data.role !== 'beneficiary' ||
-        data.account_status !== 'active'
-      ) {
+      if (data.role !== 'beneficiary' || data.account_status !== 'active') {
         await supabase.auth.signOut();
-
-        router.replace('/login');
+        if (isCurrent()) router.replace('/login');
         return;
       }
 
@@ -72,22 +82,50 @@ export default function BeneficiaryDashboardScreen() {
         local_area: data.local_area,
       });
 
-    } catch (error) {
-      Alert.alert(
-        'Profile Error',
-        error instanceof Error
-          ? error.message
-          : 'Something went wrong.'
-      );
+      if (data.profile_photo_path) {
+        // Renew this temporary URL on every focus; never persist or log it.
+        // A photo failure should not hide the rest of the dashboard.
+        try {
+          const { data: signed, error: signedError } = await supabase.storage
+            .from('profile-photos')
+            .createSignedUrl(data.profile_photo_path, 3600);
 
+          if (!isCurrent()) return;
+          if (signedError || !signed?.signedUrl) {
+            setPhotoError('Your photo could not be loaded. Please retry.');
+          } else {
+            setIsPhotoLoading(true);
+            setPhotoUrl(signed.signedUrl);
+          }
+        } catch {
+          if (isCurrent()) {
+            setPhotoError('Your photo could not be loaded. Please retry.');
+          }
+        }
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        Alert.alert(
+          'Profile Error',
+          error instanceof Error ? error.message : 'Unable to load your profile.'
+        );
+      }
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
     }
   }, [router]);
 
-  useEffect(() => {
-    loadProfile();
-  }, [loadProfile]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadProfile();
+      return () => {
+        // Ignore responses from a screen that lost focus.
+        loadIdRef.current += 1;
+        setPhotoUrl(null);
+        setIsPhotoLoading(false);
+      };
+    }, [loadProfile])
+  );
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
@@ -130,7 +168,7 @@ export default function BeneficiaryDashboardScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
 
         <Text style={styles.title}>
           Beneficiary Dashboard
@@ -139,6 +177,62 @@ export default function BeneficiaryDashboardScreen() {
         <Text style={styles.welcome}>
           Welcome, {profile.full_name}!
         </Text>
+
+        <View style={styles.photoSection}>
+          <Pressable
+            style={styles.photoWrapper}
+            accessibilityRole="button"
+            accessibilityLabel="Upload or change your profile photo"
+            onPress={() => router.push('/upload-profile-photo')}
+          >
+            {photoUrl ? (
+              <Image
+                key={photoUrl}
+                source={{ uri: photoUrl, cache: 'reload' }}
+                style={styles.profilePhoto}
+                accessibilityLabel="Your profile photo"
+                onLoadEnd={() => setIsPhotoLoading(false)}
+                onError={() => {
+                  setPhotoUrl(null);
+                  setIsPhotoLoading(false);
+                  setPhotoError('Your photo could not be displayed. Please retry.');
+                }}
+              />
+            ) : (
+              <View style={styles.photoPlaceholder}>
+                <Text style={styles.photoPlaceholderText}>No photo</Text>
+              </View>
+            )}
+            {isPhotoLoading && (
+              <ActivityIndicator
+                style={styles.photoSpinner}
+                color="#DC2626"
+                accessibilityLabel="Loading profile photo"
+              />
+            )}
+          </Pressable>
+
+          <Pressable
+            style={styles.button}
+            accessibilityRole="button"
+            onPress={() => router.push('/upload-profile-photo')}
+          >
+            <Text style={styles.buttonText}>Upload / Change Profile Photo</Text>
+          </Pressable>
+
+          {photoError && (
+            <>
+              <Text style={styles.photoError}>{photoError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void loadProfile()}
+                style={styles.retryPhotoButton}
+              >
+                <Text style={styles.retryPhotoText}>Retry Photo</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>
@@ -191,7 +285,7 @@ export default function BeneficiaryDashboardScreen() {
           </Text>
         </Pressable>
 
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -211,8 +305,63 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 24,
+  },
+
+  photoSection: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+
+  photoWrapper: {
+    width: 110,
+    height: 110,
+  },
+
+  profilePhoto: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    borderWidth: 2,
+    borderColor: '#DC2626',
+  },
+
+  photoPlaceholder: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  photoPlaceholderText: {
+    color: '#991B1B',
+    fontSize: 14,
+  },
+
+  photoSpinner: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+
+  photoError: {
+    color: '#DC2626',
+    textAlign: 'center',
+    marginTop: 12,
+  },
+
+  retryPhotoButton: {
+    padding: 12,
+  },
+
+  retryPhotoText: {
+    color: '#991B1B',
+    fontWeight: '600',
   },
 
   loadingText: {
