@@ -9,7 +9,7 @@ export default function HomeScreen() {
   const router = useRouter();
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFF5F5" />
+      <StatusBar barStyle="dark-content" />
 
       <View style={styles.content}>
         <View style={styles.logoCircle}>

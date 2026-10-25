@@ -226,7 +226,7 @@ export default function AdminDashboard() {
               <Text style={styles.secondaryText}>Next</Text>
             </Pressable>
           </View>
-        ) : null}
+        ) : undefined}
       />
       <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={closeReview}>
         <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
