@@ -160,7 +160,9 @@ export default function LoginScreen() {
 
       if (
         profile.role !== 'donor' &&
-        profile.role !== 'beneficiary'
+        profile.role !== 'beneficiary' &&
+        profile.role !== 'admin' &&
+        profile.role !== 'super_admin'
       ) {
         await supabase.auth.signOut();
 
@@ -178,6 +180,8 @@ export default function LoginScreen() {
         router.replace('/donor-dashboard');
       } else if (profile.role === 'beneficiary') {
         router.replace('/beneficiary-dashboard');
+      } else if (profile.role === 'admin' || profile.role === 'super_admin') {
+        router.replace('./admin-dashboard');
       }
 
     } catch (error) {
