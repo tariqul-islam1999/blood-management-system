@@ -18,6 +18,7 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [state, setState] = useState<ScreenState>('loading');
   const [message, setMessage] = useState('');
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [donors, setDonors] = useState<PendingDonor[]>([]);
   const [page, setPage] = useState(0);
   const [hasNextPage, setHasNextPage] = useState(false);
@@ -28,6 +29,7 @@ export default function AdminDashboard() {
   const focused = useRef(false);
 
   const clearPrivateData = useCallback(() => {
+    setIsSuperAdmin(false);
     setDonors([]);
     setSelected(null);
     setReason('');
@@ -71,6 +73,7 @@ export default function AdminDashboard() {
       if (!isActiveAdministrator(profile)) {
         throw new VerificationError('unauthorized', 'An active admin or super admin account is required.');
       }
+      setIsSuperAdmin(profile?.role === 'super_admin');
       // The wrapper refuses to call the undeployed RPC. Never fall back to table reads.
       const rows = await adminListPendingDonors(PAGE_SIZE, requestedPage * PAGE_SIZE);
       if (!current()) return;
@@ -81,6 +84,7 @@ export default function AdminDashboard() {
     } catch (error) {
       if (!current()) return;
       if (error instanceof VerificationError) {
+        if (error.code === 'expired' || error.code === 'unauthorized') setIsSuperAdmin(false);
         setState(error.code === 'inactive' || error.code === 'expired' ||
           error.code === 'unauthorized' ? error.code : 'error');
         setMessage(error.message);
@@ -149,6 +153,12 @@ export default function AdminDashboard() {
           <View style={styles.section}>
             <Text style={styles.title} accessibilityRole="header">Donor verification</Text>
             <Text style={styles.text}>Review pending donor registrations.</Text>
+            {isSuperAdmin && (
+              <Pressable accessibilityRole="link" style={styles.secondaryButton}
+                onPress={() => router.replace('./super-admin-dashboard')}>
+                <Text style={styles.secondaryText}>Return to Super Admin Dashboard</Text>
+              </Pressable>
+            )}
             <View style={styles.notice} accessibilityLiveRegion="polite">
               <Text style={styles.noticeTitle}>{VERIFICATION_SERVICE_MESSAGE}</Text>
               <Text style={styles.text}>Approvals and rejections are disabled until the backend is deployed and tested. No verification changes can be submitted.</Text>
