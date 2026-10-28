@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { Href, useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 type DonorProfile = {
@@ -582,6 +582,14 @@ export default function DonorDashboard() {
           </View>
         )}
 
+        <View style={styles.bloodRequestCard}>
+          <Text style={styles.availabilityTitle}>Blood Requests</Text>
+          <Text style={styles.availabilityDescription}>Browse matching open blood requests when the Blood Request backend is enabled.</Text>
+          <Pressable style={styles.secondaryButton} onPress={() => router.push('/open-blood-requests' as Href)} disabled={isUpdating} accessibilityRole="button">
+            <Text style={styles.secondaryButtonText}>Open Blood Requests</Text>
+          </Pressable>
+        </View>
+
         {/* MY ACCOUNT */}
 
         <Text style={styles.sectionTitle}>
@@ -882,6 +890,15 @@ const styles = StyleSheet.create({
     color: '#92400E',
     marginTop: 16,
     lineHeight: 18,
+  },
+
+  bloodRequestCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
 
   noticeCard: {

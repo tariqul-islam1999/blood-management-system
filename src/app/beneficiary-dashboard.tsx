@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { Href, useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 type BeneficiaryProfile = {
@@ -276,6 +276,17 @@ export default function BeneficiaryDashboardScreen() {
   </Text>
 </Pressable>
 
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Blood Requests</Text>
+          <Text style={styles.description}>Create and track your blood requests. This service becomes available after its backend is enabled.</Text>
+          <Pressable style={styles.button} onPress={() => router.push('/create-blood-request' as Href)} accessibilityRole="button">
+            <Text style={styles.buttonText}>Create Blood Request</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryAction} onPress={() => router.push('/my-blood-requests' as Href)} accessibilityRole="button">
+            <Text style={styles.secondaryActionText}>My Blood Requests</Text>
+          </Pressable>
+        </View>
+
         <Pressable
           style={styles.logoutButton}
           onPress={handleLogout}
@@ -426,6 +437,20 @@ const styles = StyleSheet.create({
 
   buttonText: {
     color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+
+  secondaryAction: {
+    borderWidth: 1,
+    borderColor: '#DC2626',
+    padding: 14,
+    borderRadius: 10,
+    marginTop: 10,
+    alignItems: 'center',
+  },
+
+  secondaryActionText: {
+    color: '#DC2626',
     fontWeight: 'bold',
   },
 
