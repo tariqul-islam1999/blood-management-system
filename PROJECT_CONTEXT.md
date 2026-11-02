@@ -189,6 +189,7 @@ Contains SQL migration drafts and historical migrations.
 Important:
 - `20261023000100_baseline_public.sql` is an existing baseline migration.
 - `20261023000300_revoke_client_truncate.sql` revokes client TRUNCATE privileges.
+- `20261023000350_revoke_client_trigger.sql` is a dedicated client TRIGGER-hardening review draft.
 - `20261023000400_admin_donor_verification.sql` is a donor verification migration draft.
 - `20261026000100_super_admin_management.sql` is a Super Admin Management migration draft.
 - `20261028000100_blood_request_management.sql` is the Blood Request Management migration draft.
@@ -201,8 +202,9 @@ Contains database test drafts using pgTAP.
 
 - `super_admin_management.test.sql`
 - `blood_request_management.test.sql`
+- `revoke_client_trigger.test.sql`
 
-Neither test suite has been executed successfully against an isolated PostgreSQL/Supabase environment.
+The existing database test suites, including the new TRIGGER-hardening pgTAP draft, have not been executed against an isolated PostgreSQL/Supabase environment.
 
 ---
 
@@ -366,7 +368,9 @@ The existing donor verification migration draft is also undeployed:
 
 ### 3. Donor Dashboard Layout
 
-The donor dashboard has a known UI layout issue after Blood Request navigation was added.
+**Status: RESOLVED — verified by the user on the device.**
+
+The user confirmed that the previously reported Donor Dashboard layout issue is now fixed when checked on the device. No code changes were made for this issue in that session.
 
 The user reported:
 - The area beside the donor's name is visually broken.
@@ -378,7 +382,7 @@ Three original emoji/text strings had also suffered an encoding regression durin
 - `❤️ My Donor Information`
 - `📷 Upload / Change Profile Photo`
 
-The remaining layout problem has not been fixed.
+The original symptoms are retained above as project history. No new tests are claimed as part of the session in which the user verified the fix.
 
 ### 4. Deployment and Database Testing
 
@@ -554,9 +558,15 @@ The baseline migration grants TRIGGER privileges to `anon` and `authenticated` o
 
 The Blood Request migration has a fail-closed permission guard that rejects this unsafe privilege state.
 
-A separately reviewed and applied trigger-hardening migration is required before deployment.
+A separately reviewed and applied trigger-hardening migration is required before deployment. A dedicated draft now exists at:
 
-No such approved hardening migration was created in the Blood Request frontend task.
+    supabase/migrations/20261023000350_revoke_client_trigger.sql
+
+Its matching pgTAP draft is:
+
+    supabase/tests/database/revoke_client_trigger.test.sql
+
+Both drafts have received static review. The review corrections cover the inherited-role expected error, restoration of both table and global default ACLs in the rollback rehearsal, an unknown creator default-ACL case, and preservation checks for the Auth signup trigger. No SQL or pgTAP was executed. The drafts are ready for isolated testing preparation only; syntax and runtime verification remain pending.
 
 ### 2. Donor Verification
 
@@ -847,7 +857,7 @@ Three existing donor dashboard strings had temporarily changed to mojibake:
 
 They were restored exactly before commit `79b376c`.
 
-The remaining donor dashboard layout issue is separate and still open.
+The user has since verified on the device that the donor dashboard layout issue is resolved. No code changes were made for this issue in that session.
 
 ---
 
@@ -855,21 +865,11 @@ The remaining donor dashboard layout issue is separate and still open.
 
 Prioritized list:
 
-## Priority 1 — Fix Donor Dashboard Layout
+## Priority 1 — Donor Dashboard Layout (Resolved)
 
-File:
-
-    src/app/donor-dashboard.tsx
-
-Tasks:
-- Inspect the current dashboard.
-- Compare the layout with the previous committed version if useful.
-- Identify why the name area and Profile Update button area look broken.
-- Fix only the affected layout.
-- Preserve Blood Request navigation.
-- Preserve donor availability, profile photo, donor information, and logout behavior.
-- Run TypeScript check.
-- Test on Android.
+- The user verified on the device that the previously reported layout issue is fixed.
+- No code changes were made for this issue in that session.
+- No new tests are claimed for that session.
 
 ## Priority 2 — Review Blood Request Frontend
 
@@ -908,13 +908,20 @@ Do not deploy this migration yet.
 
 ## Priority 4 — Prepare Trigger Privilege Hardening
 
-Tasks:
-- Inspect baseline migration grants.
-- Prepare a separately reviewed hardening plan.
-- Remove unsafe effective client TRIGGER privileges without weakening required server-side functionality.
-- Test the effective ACL state in an isolated environment.
+Drafts prepared and statically reviewed:
 
-Do not modify or deploy production migrations without explicit approval.
+    supabase/migrations/20261023000350_revoke_client_trigger.sql
+    supabase/tests/database/revoke_client_trigger.test.sql
+
+The static review found no new obvious blocker. They are ready for isolated testing preparation only; they have not been parsed or run against PostgreSQL. The pgTAP test helper duplicates some migration guard logic and may drift, so keep the two implementations aligned during future review.
+
+Tasks:
+- Inspect BMS-Development and confirm its target identity/schema before any testing.
+- Separately approve isolated testing operations before applying the draft or running pgTAP.
+- Test effective ACLs, direct/PUBLIC/inherited/SET ROLE paths, default ACLs, and rollback in isolation.
+- Verify the existing Auth signup trigger remains intact.
+
+Do not connect to or modify the Original/Main Supabase project. Do not deploy production migrations without explicit approval.
 
 ## Priority 5 — Complete Donor Verification Workflow
 
@@ -932,11 +939,11 @@ Tasks:
 
 ## Priority 6 — Set Up Isolated Supabase Environment
 
-Tasks:
-- Check whether Supabase test-project creation is available.
-- Create or obtain a separate test environment.
-- Never use the production database for experimental migration testing.
-- Establish a reliable migration baseline.
+The user reports that a separate Supabase Development project has been created. Its identity and schema have not yet been inspected or independently verified. The next step is to inspect BMS-Development first, then separately approve any isolated testing operations.
+
+Environment details reported by the user: region `eu-north-1`, PostgreSQL `17.11.0.011`.
+
+Never use or modify the Original/Main Supabase project for experimental migration testing. Establish and verify a safe baseline in Development before testing drafts.
 
 ## Priority 7 — Execute Database Tests
 
@@ -1160,8 +1167,13 @@ Rules for AI assistants:
 
 ### Current Database Status
 
+Status snapshot: 2026-11-03.
+
 - Blood Request migration: Drafted, not deployed.
 - Blood Request database tests: Drafted, not executed.
 - Donor verification workflow: Not yet deployed.
-- Database trigger privilege hardening: Pending.
+- Client TRIGGER hardening migration and pgTAP test: Drafted and statically reviewed; ready for isolated testing preparation only, not yet SQL-tested or deployed.
+- BMS-Development project: Reported created by the user (eu-north-1, PostgreSQL 17.11.0.011); inspect its identity/schema before testing. The Original/Main project must remain untouched.
+- Trigger-hardening SQL syntax/runtime verification: Pending. The test helper duplicates migration guard logic and may drift.
+- No SQL was executed, no pgTAP test was run, no Supabase connection was made, and nothing was deployed for the trigger-hardening drafts.
 - Production database changes: Require explicit approval.
