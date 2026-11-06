@@ -670,6 +670,23 @@ Deletion feature for now.
 - Identify implementation gaps against those approved documents.
 - Avoid unnecessary scope expansion. Focus on finishing the required features.
 
+## Super Admin Scope (2026-11-06)
+
+Approved decisions recorded 2026-11-06:
+
+- BMS is an academic SDP project, not a production enterprise system.
+- Keep the existing approved Super Admin design simple.
+- Only **one** initial Super Admin will be created, through the documented
+  trusted-operator bootstrap procedure (`docs/super-admin-management.md`). No
+  second Super Admin is expected at this stage.
+- The existing M6 Admin appointment/revocation design and its audit history
+  (`public.admin_access_history`) are retained unchanged.
+- Do **not** add a second Super Admin creation system, a recovery system, or an
+  MFA requirement at this stage.
+- Do not add enterprise-level complexity (for example multi-tenant or
+  organization-identity features).
+- Do not redesign already-approved Super Admin workflows.
+
 ## Development Rules
 
 1. Inspect the existing code before modifying it.
@@ -918,6 +935,32 @@ project documents:
 Account Deletion is **DEFERRED** (see the "Account Deletion (DEFERRED)" decision
 in Section 6) and is not part of this priority list. The numbered priorities
 below remain valid for the current draft-review and testing work.
+
+## Approved Development Priority — 2026-11-06
+
+Primary goal: complete a functional Blood Management System feature by feature,
+following the approved Project Proposal and approved project documents as the
+source of truth.
+
+Approved priority sequence:
+
+1. Donor Verification
+2. Four-month donor eligibility and donation history
+3. Blood Request and Matching
+4. Complete Donation Workflow
+5. Notifications and Health Follow-up
+6. Admin Reports and Statistics
+7. Remaining UI and integration work
+
+For each feature, complete and verify all four layers:
+- Frontend
+- Backend
+- Database
+- Integration
+
+This sequence sets the primary feature-completion order. The earlier
+"Current Development Priority" list and the "Priority 1–9" subsections below
+remain recorded as working notes and history.
 
 ## Priority 1 — Donor Dashboard Layout (Resolved)
 
