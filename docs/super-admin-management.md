@@ -53,7 +53,8 @@ The reported live checks from the earlier review (PostgreSQL 17.11, postgres,
 six RLS tables, restricted client grants, one approved and one pending donor)
 are user-provided evidence, not a live inspection performed in this phase.
 In particular, the reported live approved/nullable default has not yet been
-changed by migration 004; migration 005 requires that predecessor first.
+changed by 20261023000400_admin_donor_verification.sql;
+20261026000100_super_admin_management.sql requires that predecessor first.
 
 ## Four RPCs
 
@@ -171,7 +172,8 @@ ON DELETE RESTRICT foreign keys retain target and actor attribution, including
 when Auth deletion would cascade into profiles. They can intentionally block a
 future account deletion. Deactivation is the supported operation. Existing donor
 verification history, reviewer snapshots and approved/pending donor records are
-never rewritten. Deployment of migration 005 performs no account/donor DML.
+never rewritten. Deployment of
+20261026000100_super_admin_management.sql performs no account/donor DML.
 
 ## First super admin bootstrap: documented, NOT executed
 
@@ -259,8 +261,9 @@ these four RPCs. Enable MFA and a secure recovery process before real use.
    into chat or logs. Confirm backup/PITR availability and a tested restoration
    procedure for that Supabase plan; do not assume backups exist.
 2. In an approved disposable environment, initialize reviewed baseline 001/002,
-   apply 003 and separately approved TRIGGER hardening, then 004 and 005. The
-   historical baseline's grants intentionally require hardening. Run both SQL
+   apply 003 and the separately approved TRIGGER, REFERENCES and MAINTAIN
+   hardening, then 004 and 005. The historical baseline's grants intentionally
+   require hardening. Run both SQL
    suites only with installed pgTAP and an empty synthetic fixture target.
 3. For the existing populated project with no recorded migration history,
    **do not use db push, reset, baseline replay or migration repair**. Once

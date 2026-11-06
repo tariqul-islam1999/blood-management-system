@@ -137,15 +137,20 @@ Linting has not been successfully completed.
     └── supabase/
         ├── migrations/
         │   ├── 20261023000100_baseline_public.sql
+        │   ├── 20261023000200_baseline_auth_storage.sql
         │   ├── 20261023000300_revoke_client_truncate.sql
+        │   ├── 20261023000350_revoke_client_trigger.sql
         │   ├── 20261023000400_admin_donor_verification.sql
         │   ├── 20261026000100_super_admin_management.sql
         │   └── 20261028000100_blood_request_management.sql
         │
         └── tests/
             └── database/
+                ├── admin_donor_verification.test.sql
                 ├── super_admin_management.test.sql
-                └── blood_request_management.test.sql
+                ├── blood_request_management.test.sql
+                ├── revoke_client_trigger.test.sql
+                └── revoke_client_truncate.test.sql
 
 This is a partial project tree based on files explicitly mentioned during development. Other files and folders may exist.
 
@@ -188,8 +193,9 @@ Contains SQL migration drafts and historical migrations.
 
 Important:
 - `20261023000100_baseline_public.sql` is an existing baseline migration.
+- `20261023000200_baseline_auth_storage.sql` is an existing baseline migration for the authentication trigger and the storage bucket/policies.
 - `20261023000300_revoke_client_truncate.sql` revokes client TRUNCATE privileges.
-- `20261023000350_revoke_client_trigger.sql` is a dedicated client TRIGGER-hardening review draft.
+- `20261023000350_revoke_client_trigger.sql` is a dedicated client TRIGGER, REFERENCES and MAINTAIN privilege-hardening review draft.
 - `20261023000400_admin_donor_verification.sql` is a donor verification migration draft.
 - `20261026000100_super_admin_management.sql` is a Super Admin Management migration draft.
 - `20261028000100_blood_request_management.sql` is the Blood Request Management migration draft.
@@ -200,11 +206,13 @@ These files do not imply that the corresponding changes have been deployed to th
 
 Contains database test drafts using pgTAP.
 
+- `admin_donor_verification.test.sql`
 - `super_admin_management.test.sql`
 - `blood_request_management.test.sql`
 - `revoke_client_trigger.test.sql`
+- `revoke_client_truncate.test.sql`
 
-The existing database test suites, including the new TRIGGER-hardening pgTAP draft, have not been executed against an isolated PostgreSQL/Supabase environment.
+The existing database test suites, including the new TRIGGER, REFERENCES and MAINTAIN hardening pgTAP drafts, have not been executed against an isolated PostgreSQL/Supabase environment.
 
 ---
 
@@ -558,7 +566,7 @@ The baseline migration grants TRIGGER privileges to `anon` and `authenticated` o
 
 The Blood Request migration has a fail-closed permission guard that rejects this unsafe privilege state.
 
-A separately reviewed and applied trigger-hardening migration is required before deployment. A dedicated draft now exists at:
+A separately reviewed and applied TRIGGER, REFERENCES and MAINTAIN privilege-hardening migration is required before deployment. A dedicated draft now exists at:
 
     supabase/migrations/20261023000350_revoke_client_trigger.sql
 
@@ -638,6 +646,29 @@ until the actual live database state and migration history have been safely reco
 12. Blood request creation and interest must never display success unless the real RPC confirms success.
 13. No fake requests or fabricated interest counts are allowed.
 14. The Blood Request activation gate must remain disabled until backend deployment and security testing are complete.
+
+## Account Deletion (DEFERRED)
+
+**Status: DEFERRED.** The project has decided **not** to implement the Account
+Deletion feature for now.
+
+- Do not treat Account Deletion as an immediate development task.
+- Requirement preserved for the future: when Account Deletion is implemented,
+  it must completely remove the account **and all related application data**
+  (profile, donor/beneficiary sub-profiles, availability data, verification and
+  admin history handling, blood requests and their interests, and the
+  profile-photo object in Storage).
+- This decision does not change any migration or SQL file.
+- Related analysis is recorded in
+  `docs/user-deletion-data-retention-policy-proposal.md`.
+
+## Project Requirements — Source of Truth
+
+- The previously approved Project Proposal and the available approved project
+  documents remain the **source of truth**.
+- Do not redesign or change already-approved workflows.
+- Identify implementation gaps against those approved documents.
+- Avoid unnecessary scope expansion. Focus on finishing the required features.
 
 ## Development Rules
 
@@ -749,7 +780,10 @@ Exact authentication helper function names and Supabase client file path are UNK
 
 ## 1. Donor Dashboard Layout Issue
 
-**Status:** OPEN
+**Status:** RESOLVED
+
+The user verified on the device that the previously reported layout issue is
+fixed; no code change was required in that session (see Section 9, "Priority 1").
 
 User reported:
 - UI beside the donor's name is visually broken.
@@ -864,6 +898,26 @@ The user has since verified on the device that the donor dashboard layout issue 
 # 9. Next Steps
 
 Prioritized list:
+
+## Current Development Priority — Complete the Core Application
+
+Finish the core application as soon as possible, in support of the approved
+project documents:
+
+1. Blood request creation and management.
+2. Exact blood-group donor matching.
+3. Eligible donor notifications.
+4. Donor acceptance and beneficiary information disclosure according to the
+   approved workflow.
+5. Donation status tracking.
+6. Four-month donor eligibility and automatic availability.
+7. Two-day post-donation health follow-up.
+8. Admin features and reports.
+9. Frontend-backend integration and testing.
+
+Account Deletion is **DEFERRED** (see the "Account Deletion (DEFERRED)" decision
+in Section 6) and is not part of this priority list. The numbered priorities
+below remain valid for the current draft-review and testing work.
 
 ## Priority 1 — Donor Dashboard Layout (Resolved)
 
@@ -985,11 +1039,11 @@ After Blood Request is stable:
 
 ## Latest Git Commit
 
-    79b376c86ee6b6ca0f2428feee972a28a2bf3f8d
+    fd86e26b600ac19f41f44424de1227e1b8d5bf23
 
 Commit message:
 
-    feat: add blood request management frontend drafts
+    harden client trigger references and maintain privileges
 
 Branch:
 
@@ -1003,7 +1057,14 @@ Last confirmed state:
 
     main...origin/main
 
-Working tree was reported clean.
+Working tree has six modified, unstaged files (not committed or pushed):
+
+    PROJECT_CONTEXT.md
+    docs/admin-donor-verification.md
+    docs/blood-request-management.md
+    docs/database-baseline-review.md
+    docs/super-admin-management.md
+    supabase/tests/database/admin_donor_verification.test.sql
 
 ## Blood Request Activation Gate
 
@@ -1049,7 +1110,11 @@ This must remain false until backend deployment, security review, and testing ar
 
     supabase/migrations/20261023000100_baseline_public.sql
 
+    supabase/migrations/20261023000200_baseline_auth_storage.sql
+
     supabase/migrations/20261023000300_revoke_client_truncate.sql
+
+    supabase/migrations/20261023000350_revoke_client_trigger.sql
 
     supabase/migrations/20261023000400_admin_donor_verification.sql
 
@@ -1123,7 +1188,11 @@ Current Git branch:
 
 Latest confirmed commit:
 
-    79b376c86ee6b6ca0f2428feee972a28a2bf3f8d
+    fd86e26b600ac19f41f44424de1227e1b8d5bf23
+
+Commit message:
+
+    harden client trigger references and maintain privileges
 
 Start by:
 1. Inspecting `git status -sb`.
@@ -1131,7 +1200,7 @@ Start by:
 3. Confirming that existing changes are preserved.
 4. Identifying the highest-priority incomplete item in Section 9.
 
-The top-priority task is to fix the known Donor Dashboard layout issue around the donor name and Profile Update button.
+The Donor Dashboard layout issue is RESOLVED (see Section 8) and is not the top-priority task. See Section 9, "Current Development Priority — Complete the Core Application", for the current priorities.
 
 Only make the minimal necessary changes to `src/app/donor-dashboard.tsx`. Preserve all existing features, including Blood Request navigation, profile photo, donor information, availability, and logout.
 
@@ -1172,8 +1241,8 @@ Status snapshot: 2026-11-03.
 - Blood Request migration: Drafted, not deployed.
 - Blood Request database tests: Drafted, not executed.
 - Donor verification workflow: Not yet deployed.
-- Client TRIGGER hardening migration and pgTAP test: Drafted and statically reviewed; ready for isolated testing preparation only, not yet SQL-tested or deployed.
+- Client TRIGGER, REFERENCES and MAINTAIN hardening migration and pgTAP test: Drafted and statically reviewed; ready for isolated testing preparation only, not yet SQL-tested or deployed.
 - BMS-Development project: Reported created by the user (eu-north-1, PostgreSQL 17.11.0.011); inspect its identity/schema before testing. The Original/Main project must remain untouched.
-- Trigger-hardening SQL syntax/runtime verification: Pending. The test helper duplicates migration guard logic and may drift.
-- No SQL was executed, no pgTAP test was run, no Supabase connection was made, and nothing was deployed for the trigger-hardening drafts.
+- TRIGGER, REFERENCES and MAINTAIN hardening SQL syntax/runtime verification: Pending. The test helper duplicates migration guard logic and may drift.
+- No SQL was executed, no pgTAP test was run, no Supabase connection was made, and nothing was deployed for the TRIGGER, REFERENCES and MAINTAIN hardening drafts.
 - Production database changes: Require explicit approval.

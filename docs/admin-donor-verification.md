@@ -30,10 +30,16 @@ Use only a separately approved, isolated Supabase PostgreSQL 17 target with
 synthetic users. Docker/local testing remains postponed. Do not substitute the
 live project as a test target.
 
-An initialized Supabase platform, all three prior migrations, and the separately
-reviewed TRIGGER hardening below are prerequisites. Reconstruct with migrations
-1..3, perform the approved hardening step, then migration 4. Use the reviewed
-transactional CLI runner for migration files.
+An initialized Supabase platform, the three baseline migrations
+(20261023000100_baseline_public.sql,
+20261023000200_baseline_auth_storage.sql,
+20261023000300_revoke_client_truncate.sql), and the separately reviewed TRIGGER,
+REFERENCES and MAINTAIN hardening draft
+(20261023000350_revoke_client_trigger.sql, see below) are
+prerequisites. Reconstruct with the three baseline migrations, review and apply
+the approved hardening draft, then apply
+20261023000400_admin_donor_verification.sql. Use the reviewed transactional CLI
+runner for migration files.
 The new migration requires current_user postgres, the expected six postgres-owned
 RLS-enabled BMS tables, auth.uid(), API roles, and no effective client TRUNCATE on
 those six tables. This checks observable prerequisites, not migration-history
@@ -191,9 +197,11 @@ rewritten; review acts only on pending donors and does not invent availability e
 
 The test file is a future pgTAP test, not a migration. It uses BEGIN/ROLLBACK on
 purpose. It requires pgTAP already installed in the extensions schema, postgres
-with approved fixture role/membership administration, all four migrations plus
-the separate TRIGGER hardening, and empty public.profiles. It stops on unsuitable
-prerequisites.
+with approved fixture role/membership administration, the migrations up to and
+including 20261023000400_admin_donor_verification.sql plus the TRIGGER, REFERENCES
+and MAINTAIN hardening draft 20261023000350_revoke_client_trigger.sql, and empty
+public.profiles. It
+stops on unsuitable prerequisites.
 It does not install an extension or fetch packages.
 
 It inserts synthetic auth.users records to exercise the existing signup trigger,
@@ -280,7 +288,8 @@ The six review findings are addressed in the draft design as follows:
    during preflight and through inherited/SET ROLE paths in the final guard.
    No old guard, privilege check, RLS setting or rejection condition was removed.
 2. Live deployment remains blocked on migration-history adoption, schema/ACL drift
-   review, the separate TRUNCATE fix, and the separate TRIGGER hardening below.
+   review, the separate TRUNCATE fix, and the separate TRIGGER, REFERENCES and
+   MAINTAIN hardening below.
 3. Audit foreign keys remain ON DELETE RESTRICT. Proposed closure is deactivation,
    with preserved reviewer identity and history; physical deletion is not enabled.
 4. Test drafts now include self-promotion, privileged signup, the complete inactive
@@ -294,90 +303,50 @@ The six review findings are addressed in the draft design as follows:
 
 This changes only drafts. No finding is considered runtime-verified.
 
-## Separate TRIGGER hardening procedure: proposal only
+## Client TRIGGER, REFERENCES and MAINTAIN hardening: superseded by a dedicated draft
 
-Do not execute this section now. It needs separate approval identifying the exact
-target and impact, followed by an isolated rehearsal before any live operation.
-This is a targeted permission change, not part of the historical baselines or an
-automatic action in migration 4.
+The manual TRIGGER-hardening SQL that earlier drafts proposed here has been
+superseded. The hardening now lives in a dedicated migration draft:
 
-The unchanged baseline grants client TRIGGER on profiles, donor_profiles and
-beneficiary_profiles. Therefore migration 4 now intentionally FAILS after an
-otherwise unchanged three-migration reconstruction. The approved future sequence
-must include this separately reviewed prerequisite between migration 3 and 4.
-Do not remove the new guard or mark migration 4 applied to avoid that failure.
+    supabase/migrations/20261023000350_revoke_client_trigger.sql
 
-1. Inventory effective TRIGGER privileges on the six BMS tables for anon and
-   authenticated, including PUBLIC, all immediately inherited roles, SET ROLE
-   paths, grantors and ownership. Inventory existing noninternal triggers and
-   their function ownership/definitions through an approved, secrets-aware review.
+That draft is a repository review draft only. It has **not been applied, executed,
+or runtime-verified**, and there is currently no approved database execution path.
+Do not run the old inline SQL proposal that previously appeared in this document;
+it is retained only as history, and applying it manually could target the wrong
+project or produce an unintended impact.
+
+The unchanged baseline grants client TRIGGER on public.profiles,
+public.donor_profiles and public.beneficiary_profiles. Therefore
+20261023000400_admin_donor_verification.sql intentionally FAILS after an otherwise
+unchanged baseline reconstruction. The approved future sequence must run
+20261023000350_revoke_client_trigger.sql between
+20261023000300_revoke_client_truncate.sql and
+20261023000400_admin_donor_verification.sql. Do not remove the verification guard
+or mark 20261023000400_admin_donor_verification.sql applied to avoid that failure.
+
+The dedicated draft still requires, before any live use:
+
+1. Exact target approval, an impact statement, and an isolated rehearsal.
+2. An inventory of effective TRIGGER privileges on the six BMS tables for anon and
+   authenticated, including PUBLIC, inherited roles, SET ROLE paths, grantors and
+   ownership, plus existing noninternal triggers and their function definitions.
    Revoking TRIGGER does not remove triggers already attached to a table.
-2. Confirm the original three direct client grants are the only rights needing
-   removal. Check legitimate trusted jobs and managed trigger workflows. This
-   procedure must not change function execution, table data, ownership, managed
+3. Confirmation that the direct client grants are the only rights needing removal.
+   The change must not alter function execution, table data, ownership, managed
    auth/storage objects, or role memberships.
-3. After exact target approval and rehearsal, a trusted operator would run the
-   following separately reviewed transaction. This code is documentation, not an
-   executed export or migration. A future operator must stop on every SQL error:
+4. A stop-and-review decision if unexpected PUBLIC, parent-role, or owner grant
+   sources appear. Do not automatically revoke them, change memberships, or add
+   CASCADE; obtain approval for any additional exact change.
+5. A recheck of effective ACLs and trusted workflows after any approved commit,
+   recorded through a separately reviewed forward migration/adoption plan rather
+   than an undocumented dashboard-only change. A failed transaction leaves the
+   original permissions in place, so keep the target isolated and inaccessible
+   until remediation and verification finish.
 
-~~~sql
-BEGIN;
-SET LOCAL search_path = '';
-SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '60s';
-
-REVOKE TRIGGER ON TABLE
-    public.profiles,
-    public.donor_profiles,
-    public.beneficiary_profiles
-FROM anon, authenticated;
-
-DO $verify_trigger_hardening$
-DECLARE
-    client_role text;
-    reachable record;
-    relation_name text;
-BEGIN
-    FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-        FOR reachable IN
-            SELECT r.oid FROM pg_catalog.pg_roles AS r
-            WHERE pg_catalog.pg_has_role(client_role, r.oid, 'USAGE')
-               OR pg_catalog.pg_has_role(client_role, r.oid, 'SET')
-        LOOP
-            FOREACH relation_name IN ARRAY ARRAY[
-                'profiles', 'donor_profiles', 'beneficiary_profiles',
-                'donor_availability_details', 'donor_availability_history',
-                'donor_availability_reminders'
-            ] LOOP
-                IF pg_catalog.has_table_privilege(reachable.oid,
-                    'public.' || relation_name, 'TRIGGER') THEN
-                    RAISE EXCEPTION 'Effective client TRIGGER remains; separate grant-source review required';
-                END IF;
-            END LOOP;
-        END LOOP;
-    END LOOP;
-END;
-$verify_trigger_hardening$;
-COMMIT;
-~~~
-
-4. Unexpected PUBLIC, parent-role, owner or other grant sources cause rollback;
-   do not automatically revoke them, change memberships, or add CASCADE. Review
-   the actual sources and obtain approval for any additional exact changes.
-   A failed transaction leaves original permissions in place, so keep the target
-   isolated/inaccessible until remediation and verification finish.
-5. After successful commit, recheck effective ACLs and trusted workflows. Capture
-   the approved change and result in version control through a separately reviewed
-   forward migration/adoption plan; no additional file is created in this phase.
-   Do not leave an undocumented dashboard-only security change.
-6. Only then consider migration 4. The new audit table clears its own default
-   grants and checks effective privileges. Global/default privileges on other
-   future objects remain a separate least-privilege hardening task. Never grant
-   TRIGGER back as an automatic rollback; stop rollout and review recovery.
-
-Existing triggers require a separate decision if unexpected: this procedure does
-not silently delete or disable them. Postgres-owned definer functions remain a
-powerful trust boundary even after this narrow revoke.
+Existing legitimate triggers remain a separate decision and are never silently
+deleted or disabled. Postgres-owned definer functions remain a powerful trust
+boundary even after this narrow revoke.
 
 ## Proposed account-deactivation policy
 
@@ -445,8 +414,8 @@ CREATEROLE and membership administration for these fixtures. Managed restriction
 may reject that setup; report the blocker rather than granting broader powers.
 No extensions or roles are installed/created during offline review.
 
-The test-only invoker permission helper contains an exact copy of migration 4's
-final guard body. Offline comparison must keep both identical. It is not a new
+The test-only invoker permission helper contains an exact copy of the final guard
+body in 20261023000400_admin_donor_verification.sql. Offline comparison must keep both identical. It is not a new
 production RPC and it is not an alternative to the actual migration guard.
 
 Before deployment, resolve ALL of:

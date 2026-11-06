@@ -1,6 +1,13 @@
 -- REVIEW DRAFT ONLY. Do not execute without separate isolated-target approval.
--- Requires four migrations plus separately reviewed TRIGGER hardening, postgres,
--- CREATEROLE/fixture membership administration, and pgTAP ALREADY in extensions.
+-- Prerequisite migrations, in order, each a review draft to be reviewed before
+-- use (none is applied or runtime-verified here):
+--   20261023000100_baseline_public.sql
+--   20261023000200_baseline_auth_storage.sql
+--   20261023000300_revoke_client_truncate.sql
+--   20261023000350_revoke_client_trigger.sql (TRIGGER hardening; review before execution)
+--   20261023000400_admin_donor_verification.sql
+-- Also requires postgres, CREATEROLE/fixture membership administration, and pgTAP
+-- ALREADY in extensions.
 -- Adversarial grants/memberships below are TEST ONLY and rolled back; never run live.
 -- Intended for a disposable EMPTY BMS test database, never the existing project.
 -- The future runner must stop on SQL errors and report TAP failures as failures.

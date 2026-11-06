@@ -21,13 +21,38 @@ change migration history, or alter live permissions.
 - User-confirmed remote migration history table is absent.
 - Original exports are unchanged and remain outside this repository.
 
-## Ordered files
+## Migration inventory
+
+The repository currently contains seven migration files. Three are
+baseline/foundation migrations reconstructed from the reviewed exports; the
+remaining four are later drafts built on top of that baseline. A file's presence
+records a reviewed draft only: it does not mean the migration has been applied to
+any project or verified at runtime.
+
+Baseline/foundation migrations (reconstructed from the reviewed exports):
 
 1. 20261023000100_baseline_public.sql: tables, identity sequences, constraints,
    functions, confirmed ownership, public RLS/policies, ACLs and default ACLs.
 2. 20261023000200_baseline_auth_storage.sql: bucket configuration, enabled
    auth trigger, and exact three CSV storage policies.
-3. 20261023000300_revoke_client_truncate.sql: separate security behavior change.
+3. 20261023000300_revoke_client_truncate.sql: removes client TRUNCATE as a
+   separate security behavior change.
+
+Security-hardening draft (added after the baselines; not applied):
+
+4. 20261023000350_revoke_client_trigger.sql: dedicated client TRIGGER, REFERENCES
+   and MAINTAIN privilege-hardening review draft. It has not been applied,
+   executed, or runtime-verified.
+
+Feature-specific migration drafts (added after the baselines; not applied):
+
+5. 20261023000400_admin_donor_verification.sql: donor verification workflow draft.
+6. 20261026000100_super_admin_management.sql: Super Admin Management draft.
+7. 20261028000100_blood_request_management.sql: Blood Request Management draft.
+
+The feature drafts (5-7) intentionally fail closed until their predecessors,
+including the separate TRIGGER, REFERENCES and MAINTAIN hardening, and the
+required adoption steps are satisfied.
 
 These baselines are for reconstructing an empty BMS application schema inside
 an already initialized Supabase environment. They are not idempotent and must
@@ -65,6 +90,55 @@ the CLI would consider these files pending, not automatically recognize them.
   transaction. Do not execute statements individually or use psql autocommit.
   Each file keeps an empty local search_path and bounded lock/statement timeouts.
   Never run on an active production target.
+
+## Consolidated execution prerequisites and operational assumptions
+
+This section collects the known prerequisites for running the migration drafts
+and the database test drafts. Items are grouped by how they are known. Nothing
+here has been executed; these are requirements, not evidence that any step ran.
+
+Documented prerequisites (supported by the repository):
+
+- Target platform: PostgreSQL 17 (Supabase). The migrations and tests state
+  PostgreSQL 17 as the assumed target.
+- Executing role, isolation, CLI runner (2.121.0), schema/platform prerequisites,
+  and the no-outer-transaction and timeout requirements: see "Platform and
+  ownership prerequisites" above.
+- Migration ordering: apply the files in exact timestamp order:
+  20261023000100_baseline_public.sql,
+  20261023000200_baseline_auth_storage.sql,
+  20261023000300_revoke_client_truncate.sql,
+  20261023000350_revoke_client_trigger.sql,
+  20261023000400_admin_donor_verification.sql,
+  20261026000100_super_admin_management.sql,
+  20261028000100_blood_request_management.sql.
+- TRIGGER, REFERENCES and MAINTAIN hardening draft:
+  20261023000350_revoke_client_trigger.sql expects the preceding baseline
+  migrations and verifies the Auth signup trigger (on_auth_user_created /
+  public.handle_new_user()) before proceeding.
+- Test tooling: the database test drafts require pgTAP to be available in the
+  `extensions` schema before they run. The drafts never install tooling.
+- Test target contents: the pgTAP drafts expect an isolated, disposable target
+  with synthetic fixtures (and, for some suites, an empty profiles/Auth target).
+
+Documented project assumptions (from the current project status):
+
+- The isolated `BMS-Development` project has not had these migration drafts
+  applied.
+- No SQL or pgTAP test has been executed against that project.
+- The behavior of the eventual migration/test execution runner remains
+  unverified.
+- There is currently no approved database execution path.
+
+Unverified remote facts (cannot be confirmed from the repository):
+
+- The actual remote Supabase settings, role memberships, and privileges remain
+  unverified from local files.
+- Remote Auth confirmation/redirect settings and any remote migration history are
+  not inspected here.
+
+Do not treat any item above as proof that a step has run. Confirm every
+prerequisite on the approved isolated target before relying on it.
 
 ## Dependency and compatibility adaptations
 
@@ -149,9 +223,12 @@ Removing TRUNCATE alone does not make these remaining defaults least privilege.
 
 ### Incomplete sequence is not a secure environment
 
-Each migration is a separate transaction. If migration 2 or 3 fails, previous
-successful migrations remain committed. If migration 3's guard fails, its own
-revokes roll back and the historical TRUNCATE grants can remain in place.
+Each migration is a separate transaction. If
+20261023000200_baseline_auth_storage.sql or
+20261023000300_revoke_client_truncate.sql fails, previously successful migrations
+remain committed. If the guard in
+20261023000300_revoke_client_truncate.sql fails, its own revokes roll back and
+the historical TRUNCATE grants can remain in place.
 Do not expose that environment to real users, production applications, or
 untrusted clients. Use synthetic data only; keep it isolated until every
 migration and effective-permission check succeeds. Do not retry by removing
