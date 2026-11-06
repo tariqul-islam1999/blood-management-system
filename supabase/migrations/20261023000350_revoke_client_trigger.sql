@@ -4,6 +4,9 @@
 -- verified Supabase Auth installation. Read docs/database-baseline-review.md.
 -- Supabase CLI must own the per-file transaction and migration-history record.
 -- Never run this file with autocommit or directly against the main project.
+-- This draft removes client TRIGGER, REFERENCES and MAINTAIN from the six BMS
+-- tables without granting any new rights. It does not alter trigger objects,
+-- handlers, RLS policies, or the preserved auth.users signup trigger.
 SET LOCAL search_path = '';
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
@@ -12,6 +15,7 @@ DO $bms_trigger_preflight$
 DECLARE
     relation_name text;
     client_role text;
+    privilege_name text;
     reachable_role record;
 BEGIN
     IF current_user <> 'postgres'
@@ -64,34 +68,37 @@ BEGIN
     END LOOP;
 
     -- Only the two creators explicitly used by the baseline are changed below.
-    -- An ACL for another creator that grants clients TRIGGER is unresolved and
-    -- must be reviewed rather than silently modified by this focused migration.
-    FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-        IF EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_default_acl AS defaults
-            CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
-            WHERE defaults.defaclobjtype = 'r'
-              AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
-                  SELECT namespace_entry.oid
-                  FROM pg_catalog.pg_namespace AS namespace_entry
-                  WHERE namespace_entry.nspname = 'public'
-              ))
-              AND grant_entry.privilege_type = 'TRIGGER'
-              AND CASE
-                  WHEN grant_entry.grantee = 0 THEN true
-                  ELSE pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'USAGE')
-                    OR pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'SET')
-              END
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM pg_catalog.pg_roles AS creator
-                  WHERE creator.oid = defaults.defaclrole
-                    AND creator.rolname IN ('postgres', 'supabase_admin')
-              )
-        ) THEN
-            RAISE EXCEPTION 'Client-reachable TRIGGER default ACL exists for an unreviewed creator role';
-        END IF;
+    -- An ACL for another creator that grants clients TRIGGER, REFERENCES or
+    -- MAINTAIN is unresolved and must be reviewed rather than silently modified
+    -- by this focused migration.
+    FOREACH privilege_name IN ARRAY ARRAY['TRIGGER', 'REFERENCES', 'MAINTAIN'] LOOP
+        FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+            IF EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_default_acl AS defaults
+                CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
+                WHERE defaults.defaclobjtype = 'r'
+                  AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
+                      SELECT namespace_entry.oid
+                      FROM pg_catalog.pg_namespace AS namespace_entry
+                      WHERE namespace_entry.nspname = 'public'
+                  ))
+                  AND grant_entry.privilege_type = privilege_name
+                  AND CASE
+                      WHEN grant_entry.grantee = 0 THEN true
+                      ELSE pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'USAGE')
+                        OR pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'SET')
+                  END
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM pg_catalog.pg_roles AS creator
+                      WHERE creator.oid = defaults.defaclrole
+                        AND creator.rolname IN ('postgres', 'supabase_admin')
+                  )
+            ) THEN
+                RAISE EXCEPTION 'Client-reachable % default ACL exists for an unreviewed creator role', privilege_name;
+            END IF;
+        END LOOP;
     END LOOP;
 
     -- Fail before changing ACLs if a client can reach a privileged role.
@@ -112,9 +119,10 @@ BEGIN
 END;
 $bms_trigger_preflight$;
 
--- Remove only the table TRIGGER privilege from API clients and PUBLIC.
--- No trigger object, handler, RLS policy, or other table privilege is changed.
-REVOKE TRIGGER ON TABLE
+-- Remove only the table TRIGGER, REFERENCES and MAINTAIN privileges from API
+-- clients and PUBLIC. No trigger object, handler, RLS policy, ownership, or
+-- other table privilege is changed.
+REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLE
     public.profiles,
     public.donor_profiles,
     public.beneficiary_profiles,
@@ -124,74 +132,79 @@ REVOKE TRIGGER ON TABLE
 FROM PUBLIC, anon, authenticated;
 
 -- The baseline grants ALL TABLES to API roles in these per-schema defaults.
--- Remove only TRIGGER, including any matching global default grants.
+-- Remove only TRIGGER, REFERENCES and MAINTAIN, including any matching global
+-- default grants.
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE TRIGGER ON TABLES FROM PUBLIC, anon, authenticated;
+    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE TRIGGER ON TABLES FROM PUBLIC, anon, authenticated;
+    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-    REVOKE TRIGGER ON TABLES FROM PUBLIC, anon, authenticated;
+    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-    REVOKE TRIGGER ON TABLES FROM PUBLIC, anon, authenticated;
+    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
 
 DO $bms_trigger_effective_check$
 DECLARE
     relation_name text;
     client_role text;
+    privilege_name text;
     reachable_role record;
 BEGIN
-    FOREACH relation_name IN ARRAY ARRAY[
-        'profiles', 'donor_profiles', 'beneficiary_profiles',
-        'donor_availability_details', 'donor_availability_history',
-        'donor_availability_reminders'
-    ] LOOP
-        FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-            IF pg_catalog.has_table_privilege(
-                client_role, 'public.' || relation_name, 'TRIGGER'
-            ) THEN
-                RAISE EXCEPTION 'Effective client TRIGGER privilege remains on public.%', relation_name;
-            END IF;
-
-            -- Check roles reachable through either inherited privileges or
-            -- SET ROLE. A SET-only membership is not covered by the direct check.
-            FOR reachable_role IN
-                SELECT role_entry.oid, role_entry.rolname
-                FROM pg_catalog.pg_roles AS role_entry
-                WHERE pg_catalog.pg_has_role(client_role, role_entry.oid, 'USAGE')
-                   OR pg_catalog.pg_has_role(client_role, role_entry.oid, 'SET')
-            LOOP
+    FOREACH privilege_name IN ARRAY ARRAY['TRIGGER', 'REFERENCES', 'MAINTAIN'] LOOP
+        FOREACH relation_name IN ARRAY ARRAY[
+            'profiles', 'donor_profiles', 'beneficiary_profiles',
+            'donor_availability_details', 'donor_availability_history',
+            'donor_availability_reminders'
+        ] LOOP
+            FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
                 IF pg_catalog.has_table_privilege(
-                    reachable_role.oid, 'public.' || relation_name, 'TRIGGER'
+                    client_role, 'public.' || relation_name, privilege_name
                 ) THEN
-                    RAISE EXCEPTION 'Client can reach role % with TRIGGER on public.%',
-                        reachable_role.rolname, relation_name;
+                    RAISE EXCEPTION 'Effective client % privilege remains on public.%',
+                        privilege_name, relation_name;
                 END IF;
+
+                -- Check roles reachable through either inherited privileges or
+                -- SET ROLE. A SET-only membership is not covered by the direct check.
+                FOR reachable_role IN
+                    SELECT role_entry.oid, role_entry.rolname
+                    FROM pg_catalog.pg_roles AS role_entry
+                    WHERE pg_catalog.pg_has_role(client_role, role_entry.oid, 'USAGE')
+                       OR pg_catalog.pg_has_role(client_role, role_entry.oid, 'SET')
+                LOOP
+                    IF pg_catalog.has_table_privilege(
+                        reachable_role.oid, 'public.' || relation_name, privilege_name
+                    ) THEN
+                        RAISE EXCEPTION 'Client can reach role % with % on public.%',
+                            reachable_role.rolname, privilege_name, relation_name;
+                    END IF;
+                END LOOP;
             END LOOP;
         END LOOP;
-    END LOOP;
 
-    -- Catch PUBLIC, inherited-role and SET ROLE defaults, including global
-    -- defaults. Per-schema revokes cannot cancel a global default grant.
-    FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-        IF EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_default_acl AS defaults
-            CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
-            WHERE defaults.defaclobjtype = 'r'
-              AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
-                  SELECT namespace_entry.oid
-                  FROM pg_catalog.pg_namespace AS namespace_entry
-                  WHERE namespace_entry.nspname = 'public'
-              ))
-              AND grant_entry.privilege_type = 'TRIGGER'
-              AND CASE
-                  WHEN grant_entry.grantee = 0 THEN true
-                  ELSE pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'USAGE')
-                    OR pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'SET')
-              END
-        ) THEN
-            RAISE EXCEPTION 'Client-reachable global or public-schema TRIGGER default remains';
-        END IF;
+        -- Catch PUBLIC, inherited-role and SET ROLE defaults, including global
+        -- defaults. Per-schema revokes cannot cancel a global default grant.
+        FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+            IF EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_default_acl AS defaults
+                CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
+                WHERE defaults.defaclobjtype = 'r'
+                  AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
+                      SELECT namespace_entry.oid
+                      FROM pg_catalog.pg_namespace AS namespace_entry
+                      WHERE namespace_entry.nspname = 'public'
+                  ))
+                  AND grant_entry.privilege_type = privilege_name
+                  AND CASE
+                      WHEN grant_entry.grantee = 0 THEN true
+                      ELSE pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'USAGE')
+                        OR pg_catalog.pg_has_role(client_role, grant_entry.grantee, 'SET')
+                  END
+            ) THEN
+                RAISE EXCEPTION 'Client-reachable global or public-schema % default remains', privilege_name;
+            END IF;
+        END LOOP;
     END LOOP;
 
     -- Recheck the trigger we deliberately preserved; do not alter auth.users.
