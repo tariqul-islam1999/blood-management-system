@@ -34,6 +34,7 @@ DO $bms_truncate_check$
 DECLARE
     table_name text;
     client_role text;
+    reachable_role record;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'profiles', 'donor_profiles', 'beneficiary_profiles',
@@ -46,6 +47,22 @@ BEGIN
             ) THEN
                 RAISE EXCEPTION 'TRUNCATE remains through ownership, PUBLIC, or inherited grants';
             END IF;
+
+            -- has_table_privilege does not cover SET-only role paths, so check
+            -- every role the client can reach by inheritance or SET ROLE.
+            FOR reachable_role IN
+                SELECT role_entry.oid, role_entry.rolname
+                FROM pg_catalog.pg_roles AS role_entry
+                WHERE pg_catalog.pg_has_role(client_role, role_entry.oid, 'USAGE')
+                   OR pg_catalog.pg_has_role(client_role, role_entry.oid, 'SET')
+            LOOP
+                IF pg_catalog.has_table_privilege(
+                    reachable_role.oid, 'public.' || table_name, 'TRUNCATE'
+                ) THEN
+                    RAISE EXCEPTION 'Client can reach role % with TRUNCATE on public.%',
+                        reachable_role.rolname, table_name;
+                END IF;
+            END LOOP;
         END LOOP;
     END LOOP;
 
@@ -66,6 +83,8 @@ BEGIN
               ELSE (
                   pg_catalog.pg_has_role('anon', grant_entry.grantee, 'USAGE')
                   OR pg_catalog.pg_has_role('authenticated', grant_entry.grantee, 'USAGE')
+                   OR pg_catalog.pg_has_role('anon', grant_entry.grantee, 'SET')
+                   OR pg_catalog.pg_has_role('authenticated', grant_entry.grantee, 'SET')
               )
           END
     ) THEN
