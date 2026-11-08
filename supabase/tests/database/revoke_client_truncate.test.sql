@@ -7,6 +7,11 @@
 -- The runner must stop on SQL errors and treat any TAP failure as a failure.
 -- The pg_temp guard below must stay identical to the TRUNCATE guard body in
 -- 20261023000300_revoke_client_truncate.sql. Offline review must confirm parity.
+-- That guard is capability-gated for supabase_admin: PostgreSQL 17 needs
+-- membership in the creator role, and hosted Supabase's postgres does not have it.
+-- LOCAL-ONLY: run this file where current_user is a superuser or a member of
+-- supabase_admin (local/self-hosted). On hosted BMS-Development the gate takes the
+-- non-member branch, which this file does not exercise.
 BEGIN;
 SET LOCAL search_path = pg_temp, public, extensions;
 SET LOCAL lock_timeout = '5s';
@@ -51,6 +56,12 @@ SELECT extensions.no_plan();
 
 -- Test-only copy of the M3 guard body: direct/PUBLIC/inherited checks, SET ROLE
 -- reachable-role checks, and the default-ACL check including SET-only grantees.
+-- Keep identical to 20261023000300_revoke_client_truncate.sql, including the
+-- capability-gated supabase_admin handling and the supabase_admin-owned table
+-- assertion. That gate only differs on platforms where current_user is not a
+-- member of supabase_admin (hosted Supabase); this test therefore exercises the
+-- member/superuser branch, and the non-member branch is verified by the guarded
+-- migration itself rather than here.
 CREATE FUNCTION pg_temp.bms_assert_no_client_truncate()
 RETURNS void
 LANGUAGE plpgsql
@@ -61,7 +72,14 @@ DECLARE
     table_name text;
     client_role text;
     reachable_role record;
+    can_alter_supabase_admin boolean;
 BEGIN
+    -- PostgreSQL 17 requires membership in the creator role (not ADMIN OPTION).
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
     FOREACH table_name IN ARRAY ARRAY[
         'profiles', 'donor_profiles', 'beneficiary_profiles',
         'donor_availability_details', 'donor_availability_history',
@@ -97,7 +115,13 @@ BEGIN
         FROM pg_catalog.pg_default_acl AS defaults
         JOIN pg_catalog.pg_roles AS creator ON creator.oid = defaults.defaclrole
         CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
-        WHERE creator.rolname IN ('postgres', 'supabase_admin')
+        -- postgres is the creator of every BMS object: always strictly checked.
+        -- supabase_admin defaults are in scope only when this session could revoke
+        -- them; otherwise the assertion below proves the exposure path is empty.
+        WHERE (
+                creator.rolname = 'postgres'
+                OR (can_alter_supabase_admin IS TRUE AND creator.rolname = 'supabase_admin')
+              )
           AND defaults.defaclobjtype = 'r'
           AND defaults.defaclnamespace IN (
               0::oid,
@@ -115,6 +139,21 @@ BEGIN
           END
     ) THEN
         RAISE EXCEPTION 'Global or inherited default TRUNCATE requires separate reviewed remediation';
+    END IF;
+
+    -- A default ACL can only reach objects created by its owner role. When this
+    -- session could not revoke supabase_admin's defaults, fail closed as soon as
+    -- any supabase_admin-owned table exists in public.
+    IF can_alter_supabase_admin IS NOT TRUE AND EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS owned_relation
+        JOIN pg_catalog.pg_namespace AS owned_namespace
+          ON owned_namespace.oid = owned_relation.relnamespace
+        WHERE owned_namespace.nspname = 'public'
+          AND owned_relation.relkind IN ('r','p','v','f','m')
+          AND owned_relation.relowner = pg_catalog.to_regrole('supabase_admin')
+    ) THEN
+        RAISE EXCEPTION 'public contains supabase_admin-owned tables; supabase_admin default ACLs are in scope and must be revoked by a member of supabase_admin';
     END IF;
 END;
 $bms_truncate_guard$;

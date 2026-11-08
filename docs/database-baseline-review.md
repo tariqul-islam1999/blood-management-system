@@ -63,6 +63,65 @@ without a separately approved, verified adoption procedure.
 Do not run db push on the existing database while its history is absent:
 the CLI would consider these files pending, not automatically recognize them.
 
+## Hosted-platform deviation: supabase_admin default privileges
+
+Verified by an attempted apply against the isolated BMS-Development project
+(2026-11-09). Migration 20261023000100 failed at its first supabase_admin
+default-ACL statement:
+
+    ERROR: permission denied to change default privileges (SQLSTATE 42501)
+    At statement: 110
+    ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres
+
+PostgreSQL 17 permits ALTER DEFAULT PRIVILEGES FOR ROLE <role> for a role that is a
+member of <role>; ADMIN OPTION is not required. Hosted Supabase's postgres is not a
+member of supabase_admin, while a local/self-hosted superuser is. This was a
+platform capability difference, not a schema or guard defect: the file rolled back
+completely, the target's public schema stayed empty and no migration was recorded.
+
+Those statements are now capability-gated in M1, M3 and M3.5:
+
+- Capability = `rolsuper OR pg_has_role(<current role name>::text, 'supabase_admin',
+  'MEMBER')`, evaluated inside the migration's single transaction. The explicit
+  `::text` cast removes PostgreSQL overload ambiguity for the role argument (the
+  role name column is of type `name`, and `pg_has_role` also accepts an `oid`
+  there). Each ALTER group also runs in a nested block that converts
+  `insufficient_privilege` into the same NOTICE path; the subtransaction rolls back
+  any partially applied group.
+- With the capability (local/self-hosted): every original statement executes
+  verbatim. No behaviour change.
+- Without it (hosted): the statements are skipped with a NOTICE. M1 skips only
+  GRANTs, which cannot increase privilege. M3/M3.5 skip a REVOKE, so their guards
+  must prove the residual is harmless - which they now do.
+
+Residual risk (accepted for Development; must be re-verified):
+
+- A default ACL only affects objects created by its owner role. Every
+  postgres-controlled check stays strict, and a new assertion aborts the migration
+  if this session could not revoke supabase_admin's defaults while any
+  supabase_admin-owned relation exists in schema public. The assertion covers
+  relkind 'r' (table), 'p' (partitioned table), 'v' (view), 'f' (foreign table) and
+  'm' (materialized view), because default ACLs of type 'r' apply to tables, views
+  and foreign tables alike.
+- A supabase_admin default ACL is therefore tolerated only while supabase_admin
+  owns no such relation in public. If the platform later creates one there as
+  supabase_admin (for example during a managed upgrade), it could inherit
+  client privileges such as TRUNCATE, TRIGGER, REFERENCES or MAINTAIN that these
+  migrations cannot revoke. Treat any supabase_admin-owned relation in public as a
+  stop-and-review event.
+- This narrows scope; it does not remove a check. The previous assertion could not
+  be satisfied at all on hosted Supabase and blocked the entire sequence.
+
+Read-only verification queries for a later approved session:
+
+    SELECT c.relname, pg_get_userbyid(c.relowner) AS owner, c.relkind
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p');
+
+    SELECT defaclrole::regrole, defaclnamespace::regnamespace,
+           defaclobjtype, defaclacl
+    FROM pg_default_acl;
+
 ## Platform and ownership prerequisites
 
 - Supabase-managed auth/storage schemas, auth.users, storage.objects,
@@ -295,8 +354,11 @@ Only offline text/lexical checks were run:
   terminators checked without executing SQL.
 - Six tables, five unchanged function definitions, two identity sequences,
   fourteen PK/unique/FK constraints, three public policies and six RLS enables.
-- All source public DDL/ACL/default-ACL statements retained (with documented
-  session/schema adaptations), exact storage policies retained, trigger qualified.
+- All source public DDL/ACL statements and postgres-created default ACLs retained
+  (with documented session/schema adaptations), exact storage policies retained,
+  trigger qualified. Default ACLs addressed to the supabase_admin creator role are
+  retained but capability-gated; see "Hosted-platform deviation" above for when they
+  are skipped and the residual risk that creates.
 - Ownership, creation order, confirmed bucket bytes and TRUNCATE revokes inspected.
 - Outer transaction commands removed; PL/pgSQL blocks and existing guards retained.
 - Redundant managed-table trigger enabling replaced by a catalog assertion.

@@ -138,10 +138,35 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres
     REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
     REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
-    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
-    REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated;
+-- PostgreSQL 17 permits ALTER DEFAULT PRIVILEGES FOR ROLE <role> for a role that
+-- is a member of <role>; ADMIN OPTION is NOT required. Hosted Supabase's postgres
+-- is not a member of supabase_admin, so these two revokes are capability-gated
+-- instead of aborting with 42501. The guard below then proves the residual
+-- supabase_admin defaults cannot reach any existing object in public, and aborts if
+-- supabase_admin owns one. Residual risk is documented in
+-- docs/database-baseline-review.md.
+DO $bms_supabase_admin_trigger_default$
+DECLARE
+    can_alter_supabase_admin boolean;
+BEGIN
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
+
+    IF can_alter_supabase_admin IS TRUE THEN
+        BEGIN
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE TRIGGER, REFERENCES, MAINTAIN ON TABLES FROM PUBLIC, anon, authenticated';
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE NOTICE 'supabase_admin TRIGGER/REFERENCES/MAINTAIN defaults not revoked: insufficient privilege. The guard below re-checks effective exposure and fails closed.';
+        END;
+    ELSE
+        RAISE NOTICE 'supabase_admin TRIGGER/REFERENCES/MAINTAIN defaults not revoked: current user is not a member of supabase_admin. The guard below re-checks effective exposure and fails closed.';
+    END IF;
+END;
+$bms_supabase_admin_trigger_default$;
 
 DO $bms_trigger_effective_check$
 DECLARE
@@ -149,7 +174,17 @@ DECLARE
     client_role text;
     privilege_name text;
     reachable_role record;
+    can_alter_supabase_admin boolean;
 BEGIN
+    -- Membership in the creator role is what PostgreSQL 17 requires to alter that
+    -- role's default privileges; ADMIN OPTION is not required. When this session is
+    -- not a member of supabase_admin its exported defaults cannot be revoked here,
+    -- so the exposure path must be proven empty rather than ignored.
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
     FOREACH privilege_name IN ARRAY ARRAY['TRIGGER', 'REFERENCES', 'MAINTAIN'] LOOP
         FOREACH relation_name IN ARRAY ARRAY[
             'profiles', 'donor_profiles', 'beneficiary_profiles',
@@ -184,12 +219,20 @@ BEGIN
 
         -- Catch PUBLIC, inherited-role and SET ROLE defaults, including global
         -- defaults. Per-schema revokes cannot cancel a global default grant.
+        -- postgres is the creator of every BMS object: always strictly checked.
+        -- supabase_admin defaults are in scope only when this session could revoke
+        -- them; otherwise the assertion below proves the exposure path is empty.
         FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
             IF EXISTS (
                 SELECT 1
                 FROM pg_catalog.pg_default_acl AS defaults
+                JOIN pg_catalog.pg_roles AS creator ON creator.oid = defaults.defaclrole
                 CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
-                WHERE defaults.defaclobjtype = 'r'
+                WHERE (
+                        creator.rolname = 'postgres'
+                        OR (can_alter_supabase_admin IS TRUE AND creator.rolname = 'supabase_admin')
+                      )
+                  AND defaults.defaclobjtype = 'r'
                   AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
                       SELECT namespace_entry.oid
                       FROM pg_catalog.pg_namespace AS namespace_entry
@@ -206,6 +249,21 @@ BEGIN
             END IF;
         END LOOP;
     END LOOP;
+
+    -- A default ACL can only reach objects created by its owner role. When this
+    -- session could not revoke supabase_admin's defaults, fail closed as soon as any
+    -- supabase_admin-owned table exists in public.
+    IF can_alter_supabase_admin IS NOT TRUE AND EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS owned_relation
+        JOIN pg_catalog.pg_namespace AS owned_namespace
+          ON owned_namespace.oid = owned_relation.relnamespace
+        WHERE owned_namespace.nspname = 'public'
+          AND owned_relation.relkind IN ('r','p','v','f','m')
+          AND owned_relation.relowner = pg_catalog.to_regrole('supabase_admin')
+    ) THEN
+        RAISE EXCEPTION 'public contains supabase_admin-owned tables; supabase_admin default ACLs are in scope and must be revoked by a member of supabase_admin';
+    END IF;
 
     -- Recheck the trigger we deliberately preserved; do not alter auth.users.
     IF NOT EXISTS (

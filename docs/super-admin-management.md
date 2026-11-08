@@ -13,10 +13,15 @@ New files only:
 - `supabase/tests/database/super_admin_management.test.sql`
 - `docs/super-admin-management.md`
 
-The existing donor verification migration `20261023000400` remains unchanged.
+The donor verification migration `20261023000400` remains a prerequisite; its RPCs
+and `donor_verification_history` must exist before this draft can be applied.
 It is **not deployed yet**. Deploying this new draft first will fail closed.
 Its local SHA-256 before this phase was
 `CCAC3F86DE17FA0CA5B5B04596E84026E45032A65770833699DE2432D1DAD5B1`.
+After the minimal standalone `LOCK TABLE` removal of 2026-11-09 (required because
+the migration runner executes statements without an explicit transaction block,
+SQLSTATE 25P01) the value is
+`3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`.
 
 Target assumptions: initialized Supabase on PostgreSQL 17, executing role
 `postgres`, existing `profiles.role` values `donor`, `beneficiary`, `admin`,

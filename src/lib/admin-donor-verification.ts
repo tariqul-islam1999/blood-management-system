@@ -1,9 +1,10 @@
 import { supabase } from './supabase';
 
-// Enable only after a separately approved backend deployment and integration test.
-// Both wrappers fail closed, including calls made outside the dashboard.
-export const VERIFICATION_SERVICE_ACTIVE: boolean = false;
-export const VERIFICATION_SERVICE_MESSAGE = 'Verification service not yet activated';
+// Activated after the M5 database deployment was verified on BMS-Development.
+// Both wrappers still fail closed: they validate inputs, activation and responses
+// before and after every call.
+export const VERIFICATION_SERVICE_ACTIVE: boolean = true;
+export const VERIFICATION_SERVICE_MESSAGE = 'Verification service is currently unavailable';
 
 export type PendingDonor = {
   donor_id: string;

@@ -24,6 +24,26 @@ Historical migration SHA-256 values before this phase:
 - 20261023000300_revoke_client_truncate.sql:
   02808824818BC456945E37447D24B4904EB7EBCA7DF33A1E107C0CDF5371796A
 
+SHA-256 values AFTER the hosted-platform capability adaptation and its two
+review corrections (M1, M3 and M3.5 revised; M2 byte-identical):
+- 20261023000100_baseline_public.sql:
+  A5322AEBC4F8727ED0AC1A11B95723D53779267226E7FF099FD2E390403E39DA
+- 20261023000200_baseline_auth_storage.sql (unchanged):
+  04D79D639D452BAC600C19EF730EB71F4EFD4B6FFAD9809D356A8398A23B950F
+- 20261023000300_revoke_client_truncate.sql:
+  3A970396E8F4F178876F39C05983C9FD5475D9E864FC244FDA2EA80415364BD2
+- 20261023000350_revoke_client_trigger.sql:
+  A34675CA9B3F8DECF234AA377C5FE8529F627A5186A86FD05BBF8065185CF222
+
+The two corrections were: an explicit ::text cast on the role name passed to
+pg_has_role (removing overload ambiguity), and widening the supabase_admin-owned
+relation assertion from relkind 'r' to IN ('r','p','v','f','m').
+
+The adaptation covers only the ALTER DEFAULT PRIVILEGES statements addressed to
+the supabase_admin creator role; it changes no BMS application object, grant,
+policy or guard outcome where the executing role is a member of supabase_admin.
+See docs/database-baseline-review.md for the residual future-object risk.
+
 ## Prerequisites and safe failure
 
 Use only a separately approved, isolated Supabase PostgreSQL 17 target with
@@ -52,8 +72,11 @@ Earlier files remain committed: an incomplete sequence is not a secure environme
 Keep it inaccessible to real users. Never bypass guards to force success.
 
 A 5-second migration lock timeout and 60-second statement timeout bound ordinary
-lock waits/statements. The donor table is locked ACCESS EXCLUSIVE while checking
-and altering verification_status. Even a correct migration can block traffic;
+lock waits/statements. The ALTER TABLE that sets the new default and NOT NULL takes
+ACCESS EXCLUSIVE on donor_profiles and is the serialization point for the
+check-then-alter sequence; a standalone LOCK TABLE is not used because the
+migration runner does not open an explicit transaction block (SQLSTATE 25P01).
+Even a correct migration can block traffic;
 this draft is not approval to apply it to an active system.
 
 Existing NULL/invalid verification statuses cause a stop, not a silent backfill
@@ -458,7 +481,10 @@ hardening example. Source assertions check both role/status authorizations, raw
 validation order, all six TRIGGER targets, original permission guards and exact
 test-helper parity. The pgTAP draft contains 84 assertions; none has run.
 Whitespace/encoding and obvious credential-pattern scans passed without printing
-sensitive values. All three historical migration SHA-256 hashes still match the
-values above. Git scope remains exactly these three approved draft paths.
+sensitive values. The pre-adaptation hashes above were re-verified before the
+hosted-platform capability change; M1 and M3 now carry the post-adaptation values
+recorded earlier in this document, and M2 is unchanged. That change touched only
+ALTER DEFAULT PRIVILEGES statements addressed to supabase_admin. Git scope remains
+the approved draft paths.
 These checks are not PostgreSQL parsing, PL/pgSQL compilation, executed tests,
 concurrency proof, or migration/transaction rollback verification.

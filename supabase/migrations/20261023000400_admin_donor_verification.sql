@@ -59,8 +59,10 @@ BEGIN
 END;
 $preflight$;
 
--- Serialize the data check with inserts/updates; never rewrite historical statuses.
-LOCK TABLE public.donor_profiles IN ACCESS EXCLUSIVE MODE;
+-- The ALTER TABLE statements below take ACCESS EXCLUSIVE on donor_profiles, which
+-- is the serialization point for this check-then-alter sequence. A standalone
+-- LOCK TABLE is deliberately not used: the migration runner executes statements
+-- without an explicit transaction block, so PostgreSQL rejects it (SQLSTATE 25P01).
 DO $status_preflight$
 BEGIN
     IF EXISTS (

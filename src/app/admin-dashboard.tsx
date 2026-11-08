@@ -7,8 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import {
-  adminListPendingDonors, isActiveAdministrator, PendingDonor, ReviewDecision,
-  validateRejectionReason, VerificationError, VERIFICATION_SERVICE_MESSAGE,
+  adminListPendingDonors, adminReviewDonor, isActiveAdministrator, PendingDonor,
+  ReviewDecision, validateRejectionReason, VerificationError,
 } from '../lib/admin-donor-verification';
 
 type ScreenState = 'loading' | 'ready' | 'inactive' | 'error' | 'unauthorized' | 'expired';
@@ -25,8 +25,13 @@ export default function AdminDashboard() {
   const [selected, setSelected] = useState<PendingDonor | null>(null);
   const [decision, setDecision] = useState<ReviewDecision>('approved');
   const [reason, setReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dialogError, setDialogError] = useState('');
+  const [bannerMessage, setBannerMessage] = useState('');
   const generation = useRef(0);
   const focused = useRef(false);
+  // Guards against a second submit before the disabled state re-renders.
+  const submitting = useRef(false);
 
   const clearPrivateData = useCallback(() => {
     setIsSuperAdmin(false);
@@ -131,16 +136,78 @@ export default function AdminDashboard() {
     };
   }, [load, clearPrivateData]));
 
-  const openReview = (donor: PendingDonor) => {
-    setDecision('approved');
+  const openReview = (donor: PendingDonor, initialDecision: ReviewDecision = 'approved') => {
+    if (submitting.current) return;
+    setDecision(initialDecision);
     setReason('');
+    setDialogError('');
+    setBannerMessage('');
     setSelected(donor);
   };
   const closeReview = () => {
+    if (submitting.current) return;
     setSelected(null);
     setReason('');
+    setDialogError('');
   };
   const reasonError = decision === 'rejected' ? validateRejectionReason(reason) : null;
+
+  const submitReview = async () => {
+    if (!selected || submitting.current) return;
+    if (decision === 'rejected' && reasonError !== null) {
+      setDialogError(reasonError);
+      return;
+    }
+    submitting.current = true;
+    setIsSubmitting(true);
+    setDialogError('');
+    try {
+      // Identity, reviewer role and timestamps are derived server-side.
+      await adminReviewDonor(
+        selected.donor_id,
+        decision,
+        decision === 'rejected' ? reason.trim() : null,
+      );
+      const approved = decision === 'approved';
+      setSelected(null);
+      setReason('');
+      setBannerMessage(approved
+        ? 'Donor approved. The donor is now verified and can set their own availability.'
+        : 'Donor rejected. The registration stays unverified and unavailable.');
+      // A reviewed donor leaves the pending queue, so restart from the first page.
+      setPage(0);
+      void load(0);
+    } catch (error) {
+      if (error instanceof VerificationError) {
+        if (error.code === 'invalid' || error.code === 'request') {
+          setDialogError(error.message);
+        } else if (error.code === 'stale') {
+          // Someone else already reviewed this donor: refresh the queue.
+          setSelected(null);
+          setReason('');
+          setBannerMessage(error.message);
+          setPage(0);
+          void load(0);
+        } else {
+          // expired / unauthorized / inactive fall back to the existing screen states.
+          setSelected(null);
+          setReason('');
+          if (error.code === 'inactive') {
+            setState('inactive');
+          } else {
+            setIsSuperAdmin(false);
+            setState(error.code === 'expired' ? 'expired' : 'unauthorized');
+          }
+          setMessage(error.message);
+        }
+      } else {
+        setDialogError('The review could not be submitted. Check your connection and retry.');
+      }
+    } finally {
+      submitting.current = false;
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
@@ -159,10 +226,11 @@ export default function AdminDashboard() {
                 <Text style={styles.secondaryText}>Return to Super Admin Dashboard</Text>
               </Pressable>
             )}
-            <View style={styles.notice} accessibilityLiveRegion="polite">
-              <Text style={styles.noticeTitle}>{VERIFICATION_SERVICE_MESSAGE}</Text>
-              <Text style={styles.text}>Approvals and rejections are disabled until the backend is deployed and tested. No verification changes can be submitted.</Text>
-            </View>
+            {bannerMessage !== '' && (
+              <View style={styles.card} accessibilityLiveRegion="polite">
+                <Text style={styles.text}>{bannerMessage}</Text>
+              </View>
+            )}
             <Text style={styles.heading} accessibilityRole="header">Pending donors</Text>
             {state === 'ready' && donors.length > 0 && (
               <Text style={styles.text}>Page {page + 1} · {donors.length} registrations on this page</Text>
@@ -209,10 +277,18 @@ export default function AdminDashboard() {
             <Text style={styles.text}>Registered: {new Date(item.registered_at).toLocaleDateString()}</Text>
             <Text style={styles.pending}>Pending verification</Text>
             <View style={styles.actions}>
-              <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }}
-                style={[styles.button, styles.disabled]}><Text style={styles.buttonText}>Approve</Text></Pressable>
-              <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }}
-                style={[styles.button, styles.disabled]}><Text style={styles.buttonText}>Reject</Text></Pressable>
+              <Pressable accessibilityRole="button" disabled={isSubmitting}
+                accessibilityState={{ disabled: isSubmitting }}
+                style={[styles.button, isSubmitting && styles.disabled]}
+                onPress={() => openReview(item, 'approved')}>
+                <Text style={styles.buttonText}>Approve</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" disabled={isSubmitting}
+                accessibilityState={{ disabled: isSubmitting }}
+                style={[styles.button, isSubmitting && styles.disabled]}
+                onPress={() => openReview(item, 'rejected')}>
+                <Text style={styles.buttonText}>Reject</Text>
+              </Pressable>
               <Pressable accessibilityRole="button" accessibilityLabel={`Review details for ${item.full_name}`}
                 style={styles.secondaryButton} onPress={() => openReview(item)}>
                 <Text style={styles.secondaryText}>Review details</Text>
@@ -244,12 +320,21 @@ export default function AdminDashboard() {
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.section}>
               <Text style={styles.heading} accessibilityRole="header">Confirm donor review</Text>
               <Text style={styles.text}>{selected?.full_name}</Text>
-              <Text style={styles.text}>{VERIFICATION_SERVICE_MESSAGE}. This review cannot be submitted.</Text>
+              {isSubmitting && (
+                <Text style={styles.text} accessibilityLiveRegion="polite">
+                  Submitting the {decision === 'approved' ? 'approval' : 'rejection'}…
+                </Text>
+              )}
+              {dialogError !== '' && (
+                <Text style={styles.error} accessibilityLiveRegion="polite">{dialogError}</Text>
+              )}
               <View style={styles.actions}>
                 {(['approved', 'rejected'] as const).map((value) => (
-                  <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: decision === value }}
+                  <Pressable key={value} accessibilityRole="radio"
+                    accessibilityState={{ checked: decision === value, disabled: isSubmitting }}
                     style={[styles.secondaryButton, decision === value && styles.chosen]}
-                    onPress={() => { setDecision(value); setReason(''); }}>
+                    onPress={() => { setDecision(value); setReason(''); setDialogError(''); }}
+                    disabled={isSubmitting}>
                     <Text style={styles.secondaryText}>{value === 'approved' ? 'Approval' : 'Rejection'}</Text>
                   </Pressable>
                 ))}
@@ -266,12 +351,17 @@ export default function AdminDashboard() {
                   <Text style={styles.text}>Confirming rejection would remove this registration from the pending queue.</Text>
                 </>
               ) : <Text style={styles.text}>Confirming approval would verify this registration. Approval does not establish medical fitness or change donor availability.</Text>}
-              {/* Intentionally no mutation handler while backend activation is blocked. */}
-              <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }}
-                style={[styles.button, styles.disabled]}>
-                <Text style={styles.buttonText}>{decision === 'approved' ? 'Confirm approval' : 'Confirm rejection'}</Text>
+              <Pressable accessibilityRole="button" onPress={() => void submitReview()}
+                disabled={isSubmitting || reasonError !== null}
+                accessibilityState={{ disabled: isSubmitting || reasonError !== null }}
+                style={[styles.button, (isSubmitting || reasonError !== null) && styles.disabled]}>
+                <Text style={styles.buttonText}>
+                  {isSubmitting ? 'Submitting…'
+                    : decision === 'approved' ? 'Confirm approval' : 'Confirm rejection'}
+                </Text>
               </Pressable>
-              <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={closeReview}>
+              <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={closeReview}
+                disabled={isSubmitting} accessibilityState={{ disabled: isSubmitting }}>
                 <Text style={styles.secondaryText}>Cancel</Text>
               </Pressable>
             </ScrollView>

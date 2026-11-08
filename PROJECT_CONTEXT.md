@@ -1279,13 +1279,32 @@ Rules for AI assistants:
 
 ### Current Database Status
 
-Status snapshot: 2026-11-03.
+Status snapshot: 2026-11-09.
 
 - Blood Request migration: Drafted, not deployed.
 - Blood Request database tests: Drafted, not executed.
 - Donor verification workflow: Not yet deployed.
-- Client TRIGGER, REFERENCES and MAINTAIN hardening migration and pgTAP test: Drafted and statically reviewed; ready for isolated testing preparation only, not yet SQL-tested or deployed.
-- BMS-Development project: Reported created by the user (eu-north-1, PostgreSQL 17.11.0.011); inspect its identity/schema before testing. The Original/Main project must remain untouched.
-- TRIGGER, REFERENCES and MAINTAIN hardening SQL syntax/runtime verification: Pending. The test helper duplicates migration guard logic and may drift.
-- No SQL was executed, no pgTAP test was run, no Supabase connection was made, and nothing was deployed for the TRIGGER, REFERENCES and MAINTAIN hardening drafts.
+- Client TRIGGER, REFERENCES and MAINTAIN hardening migration and pgTAP test: Drafted, statically reviewed, and now capability-adapted for the hosted platform; still not applied anywhere.
+- BMS-Development project: Confirmed target `zbgqpqafvcxaoxxcuyxn` (eu-north-1, PostgreSQL 17.11.0.011), linked locally. The Original/Main project `zmxtxuuooviwjsdghqlt` remains untouched.
+- Verified pre-flight state of BMS-Development (2026-11-09): remote migration history empty (all seven local versions unrecorded); `public` schema empty (`inspect db table-sizes` returned no tables, `db stats` reported 0 bytes of table/index storage). `auth.users` row count and the `profile-photos` bucket configuration were NOT verifiable with the available read-only tooling.
+- Apply attempt (2026-11-09, approved): `supabase db push` of M1-M4 against BMS-Development. **M1 failed** with `permission denied to change default privileges (SQLSTATE 42501)` on `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin ...` because hosted `postgres` is not a member of `supabase_admin`. Push stopped immediately; M2, M3 and M3.5 were not attempted. Post-failure verification: history still empty, `public` still empty, M1 fully rolled back.
+- Remediation (implemented, not applied): M1, M3 and M3.5 capability-gate the supabase_admin default-ACL statements, cast the role name to `text` in the `pg_has_role` capability check (avoiding overload ambiguity), and add a supabase_admin-owned **relation** assertion covering relkind r/p/v/f/m. Migration guards and both pgTAP guard copies are synchronized. See docs/database-baseline-review.md.
+- Hashes after the corrections: M1 `A5322AEB…403E39DA`, M3 `3A970396…15364BD2`, M3.5 `A34675CA…185CF222`; M2 unchanged.
+- Applied successfully (2026-11-09): M1, M2, M3 and M3.5 pushed to BMS-Development from an isolated workdir. Verified afterwards: all four recorded in remote history, M6/M7 still unrecorded, the six baseline tables present, and `db lint` reported no schema errors. ACL, bucket and policy details rest on the migrations' own fail-closed guards because no read-only SQL channel is available.
+- M5 apply attempt (2026-11-09, approved): **failed** at statement 5 with `LOCK TABLE can only be used in transaction blocks (SQLSTATE 25P01)`. Nothing was applied, history is unchanged, and no partial objects exist (`donor_verification_history` absent, baseline tables untouched).
+- M5 correction (2026-11-09, approved Option 2): the standalone `LOCK TABLE public.donor_profiles IN ACCESS EXCLUSIVE MODE` was removed; the `ALTER TABLE ... SET DEFAULT / SET NOT NULL` statements remain the ACCESS EXCLUSIVE serialization point. The status preflight, constraints, RPCs, RLS and permission guards are unchanged. New M5 SHA-256: `3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`. This correction was subsequently applied successfully — see the progress entry below.
+- No pgTAP test has ever been executed. Both revoke tests are LOCAL-ONLY: they inject `FOR ROLE supabase_admin` default ACLs and therefore need a local/self-hosted superuser environment, not hosted Development.
 - Production database changes: Require explicit approval.
+
+### Progress entry — 2026-11-09 (frontend activation and housekeeping)
+
+- App `.env` now points to the Development project ref `zbgqpqafvcxaoxxcuyxn`. The operator repointed it during this session: the first boolean-only check returned False and, after the file changed, the same check returned True.
+- Presence checks passed for both client variables: the URL contains the Development ref, and the publishable key is present, non-empty and `sb_publishable_` prefixed.
+- Key ownership by the Development project was **not** independently verified through an authenticated API call; the `sb_publishable_` prefix identifies the key type only.
+- The operator restarted Expo with a cleared cache and opened the app successfully in Expo Go.
+- No database changes, migrations, registrations or Supabase connections were performed in this housekeeping session. (The M1–M3.5 and M5 deployments earlier on 2026-11-09 are recorded above.)
+- M1, M2, M3, M3.5 and M5 remain applied to BMS-Development. M6 and M7 remain unapplied.
+- The approved initial Super Admin bootstrap requires M6 first, because `public.admin_access_history` is created only by M6. The M6 RPCs also require an existing active super admin, so they cannot bootstrap themselves.
+- Admin donor-verification frontend is activated in code (`VERIFICATION_SERVICE_ACTIVE = true`, review dialog wired to `adminReviewDonor`); the two-account end-to-end smoke test is still outstanding.
+- Next planned work: read-only M6 review, hash and target verification, then a dry-run. A live apply requires separate explicit approval.
+- The Main Supabase project (`zmxtxuuooviwjsdghqlt`) remains untouched.

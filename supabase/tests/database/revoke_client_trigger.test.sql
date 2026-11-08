@@ -4,6 +4,13 @@
 -- including the auth.users signup trigger from 20261023000200, the dedicated
 -- TRIGGER, REFERENCES and MAINTAIN hardening migration, and pgTAP already
 -- installed in extensions.
+-- ENVIRONMENT: the default-ACL fault injections use `FOR ROLE supabase_admin`,
+-- which PostgreSQL 17 permits only for a member of that role (ADMIN OPTION is not
+-- required). Hosted Supabase's postgres is not a member, so those scenarios are
+-- LOCAL-ONLY: run this file on a local/self-hosted superuser environment, not
+-- against hosted BMS-Development. The guard body below matches
+-- 20261023000350_revoke_client_trigger.sql, including the capability gate and the
+-- supabase_admin-owned table assertion.
 -- Run as postgres with approved role/membership administration. Do not install
 -- extensions or create these fixture roles outside this rollback-only test.
 -- The runner must stop on SQL errors and treat any TAP failure as a failure.
@@ -69,7 +76,14 @@ DECLARE
     client_role text;
     privilege_name text;
     reachable_role record;
+    can_alter_supabase_admin boolean;
 BEGIN
+    -- PostgreSQL 17 requires membership in the creator role (not ADMIN OPTION).
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
     FOREACH privilege_name IN ARRAY ARRAY['TRIGGER', 'REFERENCES', 'MAINTAIN'] LOOP
         FOREACH relation_name IN ARRAY ARRAY[
             'profiles', 'donor_profiles', 'beneficiary_profiles',
@@ -99,12 +113,20 @@ BEGIN
             END LOOP;
         END LOOP;
 
+        -- postgres is the creator of every BMS object: always strictly checked.
+        -- supabase_admin defaults are in scope only when this session could revoke
+        -- them; otherwise the assertion below proves the exposure path is empty.
         FOREACH client_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
             IF EXISTS (
                 SELECT 1
                 FROM pg_catalog.pg_default_acl AS defaults
+                JOIN pg_catalog.pg_roles AS creator ON creator.oid = defaults.defaclrole
                 CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS grant_entry
-                WHERE defaults.defaclobjtype = 'r'
+                WHERE (
+                        creator.rolname = 'postgres'
+                        OR (can_alter_supabase_admin IS TRUE AND creator.rolname = 'supabase_admin')
+                      )
+                  AND defaults.defaclobjtype = 'r'
                   AND (defaults.defaclnamespace = 0::oid OR defaults.defaclnamespace = (
                       SELECT namespace_entry.oid
                       FROM pg_catalog.pg_namespace AS namespace_entry
@@ -121,6 +143,21 @@ BEGIN
             END IF;
         END LOOP;
     END LOOP;
+
+    -- A default ACL can only reach objects created by its owner role. When this
+    -- session could not revoke supabase_admin's defaults, fail closed as soon as any
+    -- supabase_admin-owned table exists in public.
+    IF can_alter_supabase_admin IS NOT TRUE AND EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS owned_relation
+        JOIN pg_catalog.pg_namespace AS owned_namespace
+          ON owned_namespace.oid = owned_relation.relnamespace
+        WHERE owned_namespace.nspname = 'public'
+          AND owned_relation.relkind IN ('r','p','v','f','m')
+          AND owned_relation.relowner = pg_catalog.to_regrole('supabase_admin')
+    ) THEN
+        RAISE EXCEPTION 'public contains supabase_admin-owned tables; supabase_admin default ACLs are in scope and must be revoked by a member of supabase_admin';
+    END IF;
 END;
 $bms_trigger_guard$;
 
@@ -258,6 +295,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
     GRANT TRIGGER ON TABLES TO anon;
+-- LOCAL-ONLY: this and every other `FOR ROLE supabase_admin` injection below needs
+-- a session that is a member of supabase_admin (a local/self-hosted superuser).
+-- Hosted Supabase's postgres is not a member, so these statements fail with 42501
+-- there; the migration itself capability-gates them instead. Do not run this file
+-- against hosted BMS-Development.
 SELECT extensions.throws_ok(
     $$SELECT pg_temp.bms_assert_no_client_trigger()$$,
     'P0001', 'Client-reachable global or public-schema TRIGGER default remains',

@@ -753,13 +753,40 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENC
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
+-- Hosted-platform capability gate for the exported supabase_admin defaults.
+-- PostgreSQL 17 permits ALTER DEFAULT PRIVILEGES FOR ROLE <role> for a role that
+-- is a member of <role>; ADMIN OPTION is NOT required ("you can change your own
+-- default privileges and the defaults of roles that you are a member of").
+-- Hosted Supabase's postgres is not a member of supabase_admin, so these
+-- statements previously failed with 42501 and aborted this migration.
+-- These twelve statements only GRANT the exported historical defaults, so
+-- skipping them when the capability is absent can never increase any privilege.
+-- The remediation in 20261023000300 and 20261023000350 re-asserts the effective
+-- client state afterwards and fails closed if it is unsafe.
+DO $bms_exported_default_acls$
+DECLARE
+    can_alter_supabase_admin boolean;
+BEGIN
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+    IF can_alter_supabase_admin IS TRUE THEN
+        BEGIN
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role';
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Exported supabase_admin sequence defaults not applied: insufficient privilege. Skipping GRANTs cannot increase privileges.';
+        END;
+    ELSE
+        RAISE NOTICE 'Exported supabase_admin sequence defaults not applied: current user is not a member of supabase_admin. Skipping GRANTs cannot increase privileges.';
+    END IF;
+END;
+$bms_exported_default_acls$;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
 
@@ -769,13 +796,31 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIO
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
+-- Same capability gate for the exported supabase_admin function defaults.
+DO $bms_exported_default_acls_functions$
+DECLARE
+    can_alter_supabase_admin boolean;
+BEGIN
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+    IF can_alter_supabase_admin IS TRUE THEN
+        BEGIN
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role';
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Exported supabase_admin function defaults not applied: insufficient privilege. Skipping GRANTs cannot increase privileges.';
+        END;
+    ELSE
+        RAISE NOTICE 'Exported supabase_admin function defaults not applied: current user is not a member of supabase_admin. Skipping GRANTs cannot increase privileges.';
+    END IF;
+END;
+$bms_exported_default_acls_functions$;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO postgres;
 
@@ -785,10 +830,29 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres;
+-- Same capability gate for the exported supabase_admin table defaults.
+-- These are the broad defaults that 20261023000300 and 20261023000350 revoke.
+DO $bms_exported_default_acls_tables$
+DECLARE
+    can_alter_supabase_admin boolean;
+BEGIN
+    SELECT role_entry.rolsuper
+           OR pg_catalog.pg_has_role(role_entry.rolname::text, 'supabase_admin', 'MEMBER')
+      INTO can_alter_supabase_admin
+      FROM pg_catalog.pg_roles AS role_entry
+     WHERE role_entry.rolname = current_user;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+    IF can_alter_supabase_admin IS TRUE THEN
+        BEGIN
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated';
+            EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role';
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Exported supabase_admin table defaults not applied: insufficient privilege. Skipping GRANTs cannot increase privileges.';
+        END;
+    ELSE
+        RAISE NOTICE 'Exported supabase_admin table defaults not applied: current user is not a member of supabase_admin. Skipping GRANTs cannot increase privileges.';
+    END IF;
+END;
+$bms_exported_default_acls_tables$;
