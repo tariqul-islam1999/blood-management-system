@@ -169,7 +169,7 @@ END;
 $list$;
 
 CREATE FUNCTION public.super_admin_get_admin_candidate(target_user_id uuid)
-RETURNS TABLE (user_id uuid, full_name text, current_role text, account_status text, eligible boolean)
+RETURNS TABLE (user_id uuid, full_name text, "current_role" text, account_status text, eligible boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET lock_timeout = '5s'
 AS $candidate$
 DECLARE

@@ -1,11 +1,12 @@
 # Super Admin Management: Phase 1 database drafts
 
-Prepared 2026-10-26. **Drafted and reviewed; not deployed.** The M6 file passed
-read-only review, an isolated-workdir SHA-256 check and an M6-only Development
-dry-run on 2026-11-09. It has **not** been applied. Approval to write these three
-files does not authorize a database connection, SQL execution, bootstrap,
-migration-history changes, package installation, or frontend activation. No
-account is created or promoted by the migration.
+Prepared 2026-10-26. **Corrected and validated; still not deployed.** M6 passed
+read-only review and M6-only Development dry-runs, but its first apply attempt
+failed on a reserved-keyword syntax error (details below). The corrected file
+passed offline PostgreSQL 17.7 parsing. It has **not** been applied. Approval to
+write these three files does not authorize a database connection, SQL execution,
+bootstrap, migration-history changes, package installation, or frontend
+activation. No account is created or promoted by the migration.
 
 ## Scope and prerequisites
 
@@ -20,12 +21,27 @@ RPCs and `donor_verification_history` must exist before this draft can be
 applied. M5 **is now applied** to BMS-Development (`zbgqpqafvcxaoxxcuyxn`), so the
 prerequisite is satisfied there; on a fresh target this draft still fails closed.
 
-Reviewed file hashes (the 2026-11-09 documentation corrections changed no SQL):
+Reviewed file hashes:
 
 - M5 `20261023000400_admin_donor_verification.sql`:
   `3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`
-- M6 `20261026000100_super_admin_management.sql`:
-  `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`
+- M6 `20261026000100_super_admin_management.sql` (current, corrected):
+  `4458B5A352160586A68A9BC837D685994D1E4C954873A2B40248B71DCEC2CF5D`
+
+**M6 is still NOT APPLIED.** Its first deployment attempt (2026-11-09) was
+rejected by the server before creating anything: `current_role` was an unquoted
+PostgreSQL reserved keyword in the `RETURNS TABLE` list of
+`super_admin_get_admin_candidate` (SQLSTATE 42601). The identifier is now quoted
+as `"current_role"`, which keeps the returned column name and the frontend
+contract unchanged. That correction superseded the earlier hash
+`E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`.
+
+Full-file validation of the corrected file was run offline with `pglast` 7.22
+(libpg_query built from **PostgreSQL 17.7**): 23 SQL statements parsed, 6
+PL/pgSQL bodies parsed (two `DO` blocks and four functions), **0 syntax errors**.
+This is syntax validation only: it does not prove runtime or semantic
+correctness, because no catalog, object, type, privilege or RLS behaviour is
+exercised without a database.
 
 M5's earlier apply attempt failed on a standalone `LOCK TABLE`. The cause is
 PostgreSQL's own rule: `LOCK TABLE` is rejected unless an **explicit**
@@ -342,7 +358,7 @@ these four RPCs. Enable MFA and a secure recovery process before real use.
      present so the CLI's history comparison passes; they are already recorded
      and are not re-run. M7 stays out.
    - Verify every copied file's SHA-256 against the repository (M6 must be
-     `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`), link
+     `4458B5A352160586A68A9BC837D685994D1E4C954873A2B40248B71DCEC2CF5D`), link
      the workdir to Development only, and confirm the target project ref.
    - Run `supabase db push --dry-run --linked --skip-vault --yes` and confirm the
      plan lists exactly M6.

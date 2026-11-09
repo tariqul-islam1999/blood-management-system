@@ -1306,12 +1306,12 @@ Status snapshot: 2026-11-09.
 - M1, M2, M3, M3.5 and M5 remain applied to BMS-Development. M6 and M7 remain unapplied.
 - The approved initial Super Admin bootstrap requires M6 first, because `public.admin_access_history` is created only by M6. The M6 RPCs also require an existing active super admin, so they cannot bootstrap themselves.
 - Admin donor-verification frontend is activated in code (`VERIFICATION_SERVICE_ACTIVE = true`, review dialog wired to `adminReviewDonor`); the two-account end-to-end smoke test is still outstanding.
-- Next planned work: approve and apply M6 from an isolated workdir with `supabase db push --linked --skip-vault --yes` (one implicit transaction per file, history row included), then confirm `migration list` shows M6 applied and M7 unapplied. The Super Admin bootstrap remains a separate approved operation.
+- Next planned work: re-run the M6-only dry-run and re-apply the corrected file from an isolated workdir with `supabase db push --linked --skip-vault --yes` (one implicit transaction per file, history row included), then confirm `migration list` shows M6 applied and M7 unapplied. The Super Admin bootstrap remains a separate approved operation.
 - The Main Supabase project (`zmxtxuuooviwjsdghqlt`) remains untouched.
 
 ### Progress entry - 2026-11-09 (M6 read-only review, dry-run and documentation correction)
 
-- M6 reviewed read-only; reviewed SHA-256 `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552` (the documentation correction recorded here changed no SQL).
+- M6 reviewed read-only at that point; the originally reviewed SHA-256 was `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`. That version was superseded by the `current_role` correction — see the 2026-11-09 apply-attempt entry below.
 - Repository state at review: branch `main`, HEAD `363521d1205f95de01d1dc6878db7a4e079851bd` equal to `origin/main`, clean working tree; nothing staged, committed or pushed.
 - Development target re-confirmed: CLI link `zbgqpqafvcxaoxxcuyxn` (BMS-Development). Remote history records M1, M2, M3, M3.5 and M5; M6 and M7 are unapplied. Main `zmxtxuuooviwjsdghqlt` was never accessed.
 - M6-only dry-run from a fresh temporary workdir (`config.toml` plus M1-M6, M7 excluded, every copied file hash verified) listed exactly one pending migration: `20261026000100_super_admin_management.sql`. Nothing was applied.
@@ -1320,3 +1320,14 @@ Status snapshot: 2026-11-09.
 - `SET LOCAL` in M6 is a warning-only no-op under `db push`, so the in-file `search_path`, 5 s `lock_timeout`, 60 s `statement_timeout` and `check_function_bodies` do not take effect during deployment. Impact is limited because M6 only creates new objects and never alters an existing table, but the deployed objects must still be verified afterwards.
 - Documentation corrected (SQL unchanged): `docs/super-admin-management.md`, `docs/admin-donor-verification.md` and this file.
 - M6 remains unapplied; a live apply requires separate explicit approval.
+
+### Progress entry - 2026-11-09 (M6 apply attempt failed, SQL correction, PostgreSQL 17 validation)
+
+- M6 apply attempt (2026-11-09, approved) against BMS-Development failed with `ERROR: syntax error at or near "current_role" (SQLSTATE 42601)` while parsing `CREATE FUNCTION public.super_admin_get_admin_candidate`. `current_role` was an unquoted PostgreSQL reserved keyword in that `RETURNS TABLE` list.
+- Nothing was applied: remote history still recorded only M1, M2, M3, M3.5 and M5, with no row for M6 or M7. No `migration repair` was run and no automatic retry was attempted.
+- Correction (approved): the identifier is now quoted as `"current_role"` in that one declaration. The returned column name is unchanged, so `src/lib/admin-management.ts`, `src/app/super-admin-dashboard.tsx` and the documented contract remain valid; no application code was modified.
+- Corrected M6 SHA-256: `4458B5A352160586A68A9BC837D685994D1E4C954873A2B40248B71DCEC2CF5D` (supersedes `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`).
+- Full-file validation ran offline with `pglast` 7.22, whose bundled libpg_query reports PostgreSQL 17.7: 23 top-level SQL statements parsed, 6 PL/pgSQL bodies parsed (two `DO` blocks and four functions), 0 syntax errors. It ran in an isolated temporary virtual environment; global Python was unchanged and no database was contacted.
+- Limitation: syntax validation does not prove runtime or semantic correctness, because no catalog, object, type, privilege or RLS behaviour is exercised without a database.
+- M6 is still NOT APPLIED and M7 remains unapplied. The Main project `zmxtxuuooviwjsdghqlt` was not accessed.
+- Documentation updated with the new hash and this failure record; a fresh M6-only dry-run precedes any re-apply.
