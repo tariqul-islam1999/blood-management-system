@@ -1,9 +1,11 @@
 # Super Admin Management: Phase 1 database drafts
 
-Prepared 2026-10-26. **Local drafts only; nothing deployed or executed.**
-Approval to write these three files does not authorize a database connection,
-SQL execution, bootstrap, migration-history changes, package installation, or
-frontend activation. No account is created or promoted by the migration.
+Prepared 2026-10-26. **Drafted and reviewed; not deployed.** The M6 file passed
+read-only review, an isolated-workdir SHA-256 check and an M6-only Development
+dry-run on 2026-11-09. It has **not** been applied. Approval to write these three
+files does not authorize a database connection, SQL execution, bootstrap,
+migration-history changes, package installation, or frontend activation. No
+account is created or promoted by the migration.
 
 ## Scope and prerequisites
 
@@ -13,15 +15,24 @@ New files only:
 - `supabase/tests/database/super_admin_management.test.sql`
 - `docs/super-admin-management.md`
 
-The donor verification migration `20261023000400` remains a prerequisite; its RPCs
-and `donor_verification_history` must exist before this draft can be applied.
-It is **not deployed yet**. Deploying this new draft first will fail closed.
-Its local SHA-256 before this phase was
-`CCAC3F86DE17FA0CA5B5B04596E84026E45032A65770833699DE2432D1DAD5B1`.
-After the minimal standalone `LOCK TABLE` removal of 2026-11-09 (required because
-the migration runner executes statements without an explicit transaction block,
-SQLSTATE 25P01) the value is
-`3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`.
+The donor verification migration `20261023000400` (M5) remains a prerequisite; its
+RPCs and `donor_verification_history` must exist before this draft can be
+applied. M5 **is now applied** to BMS-Development (`zbgqpqafvcxaoxxcuyxn`), so the
+prerequisite is satisfied there; on a fresh target this draft still fails closed.
+
+Reviewed file hashes (the 2026-11-09 documentation corrections changed no SQL):
+
+- M5 `20261023000400_admin_donor_verification.sql`:
+  `3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`
+- M6 `20261026000100_super_admin_management.sql`:
+  `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`
+
+M5's earlier apply attempt failed on a standalone `LOCK TABLE`. The cause is
+PostgreSQL's own rule: `LOCK TABLE` is rejected unless an **explicit**
+`BEGIN … COMMIT` block is open, and the runner provides only an implicit
+per-file transaction. That rejection aborts the whole file, so the incident is
+**not** evidence that anything was partially committed. See "How the approved
+runner executes this file" below.
 
 Target assumptions: initialized Supabase on PostgreSQL 17, executing role
 `postgres`, existing `profiles.role` values `donor`, `beneficiary`, `admin`,
@@ -60,6 +71,58 @@ are user-provided evidence, not a live inspection performed in this phase.
 In particular, the reported live approved/nullable default has not yet been
 changed by 20261023000400_admin_donor_verification.sql;
 20261026000100_super_admin_management.sql requires that predecessor first.
+
+## How the approved runner executes this file
+
+The approved deployment tool is the project-pinned Supabase CLI
+(`supabase@2.121.0`, `supabase db push`). Its v2.121.0 documentation and source
+describe the following behavior:
+
+- Each compatible migration file is applied in **one implicit transaction**: the
+  migration statements and the `INSERT` into
+  `supabase_migrations.schema_migrations(version, name, statements)` are sent as
+  one extended-protocol batch with a single final `Sync`, so the schema changes
+  and the migration-history row commit together. A failure anywhere aborts the
+  whole file, leaving no objects and no history row, so the identical file can be
+  retried.
+- This is **not** an explicit `BEGIN/COMMIT` block. M6 contains no transaction
+  control statements, and none must be added: the CLI treats explicit
+  transaction control specially and would flush it out of the batch.
+- Per-file atomicity is lost at any "pipeline-incompatible" statement. The CLI
+  commits the open batch, runs that statement standalone, then resumes batching,
+  so earlier statements stay committed while no history row is written:
+  `CREATE [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`,
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM` and `CLUSTER`. The reviewed
+  M6 file contains none of these; adding one later would break atomicity unless
+  it is isolated in its own migration.
+- Atomicity is per file, not per push. M6 is the only pending file for this
+  deployment (M7 remains unapplied), so one push is one transaction.
+
+### `SET LOCAL` limitation when M6 is deployed
+
+M6 opens with `SET LOCAL search_path = ''`, `lock_timeout = '5s'`,
+`statement_timeout = '60s'` and `check_function_bodies = on`. Because there is
+no explicit transaction block, PostgreSQL reports
+`SET LOCAL can only be used in transaction blocks` as a **warning** and the
+settings have **no effect** during a `db push` deployment. The warning is not an
+error, so it does not block the deployment.
+
+The practical impact is limited, and it must not be overstated:
+
+- The functions M6 creates carry their own `SET search_path = ''` and use fully
+  qualified names; the preflight and permission-guard blocks are fully qualified
+  too. The unset session `search_path` therefore does not change what resolves.
+- The 5-second `lock_timeout` and 60-second `statement_timeout` do **not** bound
+  the deployment. That is acceptable here only because M6 creates new objects
+  (plus grants/revokes on those new objects) and does not `ALTER` or rewrite any
+  existing table, so it takes no long-lived lock on a busy relation.
+- `check_function_bodies` is `on` by default anyway.
+
+Consequences: read the SQL file's header comment ("run this entire file in one
+runner-owned transaction") as intent, not as an enforced setting. Rely on the
+CLI's implicit per-file transaction for rollback, and re-verify the resulting
+objects (ownership, RLS, indexes, grants, RPC behavior) after deployment instead
+of assuming the in-file timeouts applied.
 
 ## Four RPCs
 
@@ -267,21 +330,35 @@ these four RPCs. Enable MFA and a secure recovery process before real use.
    procedure for that Supabase plan; do not assume backups exist.
 2. In an approved disposable environment, initialize reviewed baseline 001/002,
    apply 003 and the separately approved TRIGGER, REFERENCES and MAINTAIN
-   hardening, then 004 and 005. The historical baseline's grants intentionally
-   require hardening. Run both SQL
-   suites only with installed pgTAP and an empty synthetic fixture target.
-3. For the existing populated project with no recorded migration history,
-   **do not use db push, reset, baseline replay or migration repair**. Once
-   separately approved, deploy ONLY the reviewed donor verification file 004
-   first, preserving the manually approved donor. Verify it before continuing.
-   Then submit ONLY file 005 using a trusted runner that wraps the complete file
-   in one BEGIN/COMMIT transaction with stop-on-error. Do not run in autocommit.
-   Store the exact deployed file hashes and operation record in the approved
-   deployment log; history adoption remains a separate reviewed task.
-4. Any guard/DDL failure must roll back the whole file. Do not remove a guard or
-   broaden grants to force deployment. Check no partial new objects remain.
-   Execute bootstrap only as a separately approved, audited operation after the
-   migration succeeds. Validate RPCs through real Auth/PostgREST synthetic users.
+   hardening, then 004 and 005 (M5). The historical baseline's grants
+   intentionally require hardening. Run the SQL suites only with installed pgTAP
+   and an empty synthetic fixture target.
+3. BMS-Development (`zbgqpqafvcxaoxxcuyxn`) already records M1, M2, M3, M3.5 and
+   M5 in `supabase_migrations.schema_migrations`; M6 and M7 are unapplied. The
+   approved process for that project is the project-pinned CLI run from an
+   isolated temporary workdir:
+   - Copy `supabase/config.toml` and the six migration files M1, M2, M3, M3.5, M5
+     and M6 into the temporary `supabase/migrations` directory. M1–M5 must be
+     present so the CLI's history comparison passes; they are already recorded
+     and are not re-run. M7 stays out.
+   - Verify every copied file's SHA-256 against the repository (M6 must be
+     `E3516117D1825BBDC4FF7E46D8C6410AE963973FC6DB1DB4D195AD1C1A9E0552`), link
+     the workdir to Development only, and confirm the target project ref.
+   - Run `supabase db push --dry-run --linked --skip-vault --yes` and confirm the
+     plan lists exactly M6.
+   - After separate explicit approval, run
+     `supabase db push --linked --skip-vault --yes`, then confirm with
+     `supabase migration list --linked` that M6 appears in both columns while M7
+     remains unapplied. Do not use `migration repair`, `db reset`, baseline
+     replay or manual SQL, and do not add `BEGIN/COMMIT` to migration files.
+   - Delete the temporary workdir afterwards and keep the deployed file hashes
+     and operation record in the approved deployment log.
+4. The push is atomic per migration file (migration SQL and its history row
+   commit together), so a guard/DDL failure leaves nothing to clean up: do not
+   remove a guard or broaden grants to force deployment; investigate, then retry
+   the identical file. Execute bootstrap only as a separately approved, audited
+   operation after the migration succeeds. Validate RPCs through real
+   Auth/PostgREST synthetic users.
 5. Recheck all four RPC owners, SECURITY DEFINER flags, empty search_path, grants,
    absence of PUBLIC/anon/service_role execution, audit RLS and no policies or
    direct/sequence access, including inherited and SET-role grants. Exercise

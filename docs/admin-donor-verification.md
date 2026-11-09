@@ -65,28 +65,41 @@ RLS-enabled BMS tables, auth.uid(), API roles, and no effective client TRUNCATE 
 those six tables. This checks observable prerequisites, not migration-history
 adoption or full schema equivalence.
 
-The migration has no outer BEGIN/COMMIT. SET LOCAL, permission guards and DDL
-depend on one transaction managed by the runner. A failure must roll back this
-entire file, including default/NOT NULL changes, audit table, indexes, and RPCs.
-Earlier files remain committed: an incomplete sequence is not a secure environment.
-Keep it inaccessible to real users. Never bypass guards to force success.
+The migration has no outer BEGIN/COMMIT. The approved runner (`supabase db push`,
+CLI 2.121.0) applies each compatible migration file in one **implicit**
+transaction: the migration statements and the history row in
+`supabase_migrations.schema_migrations` are committed together at a single final
+`Sync`. A failure therefore rolls back this entire file, including default/NOT
+NULL changes, audit table, indexes, and RPCs. This is not an explicit
+`BEGIN/COMMIT` block, and per-file atomicity would be lost if any
+pipeline-incompatible statement (for example `CREATE INDEX CONCURRENTLY`,
+`VACUUM`, `CLUSTER`, `ALTER SYSTEM`) were added. Earlier files remain committed:
+an incomplete sequence is not a secure environment. Keep it inaccessible to real
+users. Never bypass guards to force success.
 
-A 5-second migration lock timeout and 60-second statement timeout bound ordinary
-lock waits/statements. The ALTER TABLE that sets the new default and NOT NULL takes
-ACCESS EXCLUSIVE on donor_profiles and is the serialization point for the
-check-then-alter sequence; a standalone LOCK TABLE is not used because the
-migration runner does not open an explicit transaction block (SQLSTATE 25P01).
-Even a correct migration can block traffic;
-this draft is not approval to apply it to an active system.
+The migration's `SET LOCAL` lines do not take effect under the approved runner:
+PostgreSQL warns `SET LOCAL can only be used in transaction blocks` and ignores
+them, so the 5-second lock timeout, 60-second statement timeout and empty
+`search_path` are not enforced during deployment. The ALTER TABLE that sets the
+new default and NOT NULL still takes ACCESS EXCLUSIVE on donor_profiles and is
+the serialization point for the check-then-alter sequence; a standalone
+`LOCK TABLE` is not used because PostgreSQL rejects `LOCK TABLE` unless an
+explicit `BEGIN … COMMIT` block is open (the runner supplies only an implicit
+transaction). The earlier apply attempt that failed this way aborted the whole
+file; it did not prove a partial commit. Even a correct migration can block
+traffic; this draft is not approval to apply it to an active system.
 
 Existing NULL/invalid verification statuses cause a stop, not a silent backfill
 or promotion. Existing approved/rejected statuses and existing verification
 timestamps are preserved. Existing admin objects or conflicting index names also
 fail instead of being replaced. Review schema drift separately.
 
-The remote migration-history table was reported absent. Do not run db push on the
-existing project: it could attempt to replay fresh-environment baseline files.
-A separately reviewed adoption/deployment procedure is still required.
+The remote migration-history table was reported absent at drafting time, and a
+`db push` was withheld until the target was reconciled. That state is resolved
+for BMS-Development: M1–M5 are recorded and were applied from isolated temporary
+workdirs with the project-pinned CLI (`db push --linked`), never by replaying
+baseline files against an unreconciled project. Any remaining M6/M7 deployment
+requires separate approval and the same isolated-workdir procedure.
 
 ## Data and behavior
 
