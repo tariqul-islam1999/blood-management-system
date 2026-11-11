@@ -18,6 +18,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Href, useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '../lib/supabase';
+import {
+  DONOR_ELIGIBILITY_SERVICE_ACTIVE,
+  DONOR_ELIGIBILITY_SERVICE_MESSAGE,
+  getMyDonorEligibility,
+  listMyDonations,
+  type DonationRecord,
+  type DonorEligibility,
+} from '../lib/donor-eligibility';
 
 type DonorProfile = {
   fullName: string;
@@ -41,6 +49,40 @@ export default function DonorDashboard() {
 
   const [showReasonBox, setShowReasonBox] = useState(false);
   const [unavailableReason, setUnavailableReason] = useState('');
+
+  const [eligibility, setEligibility] = useState<DonorEligibility | null>(null);
+  const [donations, setDonations] = useState<DonationRecord[]>([]);
+  const [eligibilityNotice, setEligibilityNotice] = useState<string | null>(null);
+
+  // ========== LOAD ELIGIBILITY AND HISTORY ==========
+
+  const loadEligibility = useCallback(async () => {
+    if (!DONOR_ELIGIBILITY_SERVICE_ACTIVE) {
+      setEligibility(null);
+      setDonations([]);
+      setEligibilityNotice(null);
+      return;
+    }
+
+    try {
+      const [summary, history] = await Promise.all([
+        getMyDonorEligibility(),
+        listMyDonations(5, 0),
+      ]);
+
+      setEligibility(summary);
+      setDonations(history);
+      setEligibilityNotice(null);
+    } catch (error) {
+      setEligibility(null);
+      setDonations([]);
+      setEligibilityNotice(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load donation eligibility.'
+      );
+    }
+  }, []);
 
   // ========== LOAD DONOR DATA ==========
 
@@ -104,6 +146,8 @@ export default function DonorDashboard() {
         localArea: common.local_area,
       });
 
+      await loadEligibility();
+
       setPhotoUrl(null);
 
       if (common.profile_photo_path) {
@@ -129,7 +173,7 @@ export default function DonorDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [router]);
+  }, [router, loadEligibility]);
 
   useFocusEffect(
     useCallback(() => {
@@ -581,6 +625,78 @@ export default function DonorDashboard() {
             </Text>
           </View>
         )}
+
+        {/* DONATION ELIGIBILITY AND HISTORY */}
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            🩸 Donation Eligibility
+          </Text>
+
+          {!DONOR_ELIGIBILITY_SERVICE_ACTIVE && (
+            <Text style={styles.noticeText}>
+              {DONOR_ELIGIBILITY_SERVICE_MESSAGE}
+            </Text>
+          )}
+
+          {DONOR_ELIGIBILITY_SERVICE_ACTIVE && eligibilityNotice && (
+            <Text style={styles.noticeText}>{eligibilityNotice}</Text>
+          )}
+
+          {DONOR_ELIGIBILITY_SERVICE_ACTIVE && eligibility && (
+            <>
+              <Text style={styles.label}>Last Donation</Text>
+              <Text style={styles.value}>
+                {eligibility.last_donation_date ?? 'Not recorded'}
+              </Text>
+
+              <Text style={styles.label}>Eligibility</Text>
+              <Text style={styles.value}>
+                {eligibility.is_eligible
+                  ? 'Eligible to donate'
+                  : `Recovery period — ${eligibility.days_remaining} day(s) remaining`}
+              </Text>
+
+              {eligibility.next_eligible_date && (
+                <>
+                  <Text style={styles.label}>Next Eligible Date</Text>
+                  <Text style={styles.value}>
+                    {eligibility.next_eligible_date}
+                  </Text>
+                </>
+              )}
+
+              <View style={styles.divider} />
+
+              <Text style={styles.label}>Donation History</Text>
+
+              {donations.length === 0 ? (
+                <Text style={styles.value}>No donations recorded yet.</Text>
+              ) : (
+                donations.map((donation) => (
+                  <Text key={donation.donation_id} style={styles.value}>
+                    {donation.donated_on} ·{' '}
+                    {donation.source === 'admin'
+                      ? 'Recorded by admin'
+                      : 'Recorded by you'}
+                    {donation.note ? ` · ${donation.note}` : ''}
+                  </Text>
+                ))
+              )}
+
+              <Text style={styles.privacyNote}>
+                Donation history is recorded automatically when a completed
+                donation is confirmed; manual recording is not available.
+              </Text>
+
+              {!eligibility.is_eligible && (
+                <Text style={styles.privacyNote}>
+                  Availability returns automatically on the next eligible date.
+                </Text>
+              )}
+            </>
+          )}
+        </View>
 
         <View style={styles.bloodRequestCard}>
           <Text style={styles.availabilityTitle}>Blood Requests</Text>

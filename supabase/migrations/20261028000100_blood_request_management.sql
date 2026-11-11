@@ -44,6 +44,11 @@ BEGIN
                    AND pg_catalog.pg_get_expr(d.adbin,d.adrelid) IN ('''pending''::text','''pending''')) THEN
     RAISE EXCEPTION 'A reviewed donor-verification workflow with a pending default is required before blood requests';
   END IF;
+  IF pg_catalog.to_regclass('public.donor_donations') IS NULL
+     OR pg_catalog.to_regprocedure('public.donor_is_eligible(date)') IS NULL
+     OR pg_catalog.to_regprocedure('public.refresh_eligible_donor_availability()') IS NULL THEN
+    RAISE EXCEPTION 'Apply the reviewed donor eligibility migration 20261027000100 before blood requests';
+  END IF;
   IF EXISTS (SELECT 1 FROM public.profiles p WHERE p.role NOT IN ('donor','beneficiary','admin','super_admin') OR p.account_status NOT IN ('active','suspended','deactivated')
              OR pg_catalog.char_length(pg_catalog.btrim(p.district)) NOT BETWEEN 2 AND 100 OR pg_catalog.char_length(pg_catalog.btrim(p.thana)) NOT BETWEEN 2 AND 100 OR pg_catalog.char_length(pg_catalog.btrim(p.local_area)) NOT BETWEEN 2 AND 100)
      OR EXISTS (SELECT 1 FROM public.donor_profiles d WHERE d.blood_group NOT IN ('A+','A-','B+','B-','AB+','AB-','O+','O-') OR d.verification_status NOT IN ('pending','approved','rejected') OR d.availability_status NOT IN ('available','unavailable')) THEN
@@ -160,11 +165,13 @@ CREATE FUNCTION public.donor_list_open_blood_requests(page_size integer DEFAULT 
 RETURNS TABLE(request_id uuid,blood_group text,district text,thana text,local_area text,units_requested smallint,urgency text,needed_by date,created_at timestamptz,has_expressed_interest boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' SET lock_timeout='5s'
 AS $list_donor$
-DECLARE actor_id uuid:=auth.uid(); actor_blood_group text;
+DECLARE actor_id uuid:=auth.uid(); actor_blood_group text; actor_last_donation date;
 BEGIN
-  SELECT d.blood_group INTO actor_blood_group FROM public.donor_profiles d JOIN public.profiles p ON p.id=d.user_id
+  PERFORM public.refresh_eligible_donor_availability();
+  SELECT d.blood_group,d.last_donation_date INTO actor_blood_group,actor_last_donation FROM public.donor_profiles d JOIN public.profiles p ON p.id=d.user_id
   WHERE d.user_id=actor_id AND p.role='donor' AND p.account_status='active' AND d.verification_status='approved' AND d.availability_status='available' FOR SHARE OF d,p;
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Active approved available donor account required'; END IF;
+  IF NOT public.donor_is_eligible(actor_last_donation) THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Donor eligibility returns after the 4-month recovery period'; END IF;
   IF page_size IS NULL OR page_size NOT BETWEEN 1 AND 50 OR page_offset IS NULL OR page_offset NOT BETWEEN 0 AND 100000 THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Invalid pagination'; END IF;
   RETURN QUERY SELECT r.id,r.blood_group,r.district,r.thana,r.local_area,r.units_requested,r.urgency,r.needed_by,r.created_at,
     EXISTS(SELECT 1 FROM public.blood_request_interests i WHERE i.request_id=r.id AND i.donor_id=actor_id)
@@ -176,11 +183,13 @@ CREATE FUNCTION public.donor_express_interest(target_request_id uuid)
 RETURNS TABLE(request_id uuid,interest_id uuid,interest_status text,expressed_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' SET lock_timeout='5s'
 AS $interest$
-DECLARE actor_id uuid:=auth.uid(); actor_blood_group text; target_request public.blood_requests%ROWTYPE; new_interest_id uuid; decision_time timestamptz;
+DECLARE actor_id uuid:=auth.uid(); actor_blood_group text; actor_last_donation date; target_request public.blood_requests%ROWTYPE; new_interest_id uuid; decision_time timestamptz;
 BEGIN
-  SELECT d.blood_group INTO actor_blood_group FROM public.donor_profiles d JOIN public.profiles p ON p.id=d.user_id
+  PERFORM public.refresh_eligible_donor_availability();
+  SELECT d.blood_group,d.last_donation_date INTO actor_blood_group,actor_last_donation FROM public.donor_profiles d JOIN public.profiles p ON p.id=d.user_id
   WHERE d.user_id=actor_id AND p.role='donor' AND p.account_status='active' AND d.verification_status='approved' AND d.availability_status='available' FOR SHARE OF d,p;
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Active approved available donor account required'; END IF;
+  IF NOT public.donor_is_eligible(actor_last_donation) THEN RAISE EXCEPTION USING ERRCODE='55000',MESSAGE='Donor eligibility returns after the 4-month recovery period'; END IF;
   IF target_request_id IS NULL THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Invalid blood request'; END IF;
   SELECT r.* INTO target_request FROM public.blood_requests r WHERE r.id=target_request_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='P0002',MESSAGE='Blood request not found'; END IF;

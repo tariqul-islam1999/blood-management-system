@@ -405,12 +405,13 @@ Files:
 - `src/app/reset-password.tsx` — recovery link handling and new-password form.
 - `src/lib/password-reset.ts` — shared helpers (redirect URL building, recovery parameter parsing, password policy).
 
-Known remaining problem: the reset email currently produces a link with `redirect_to=http://localhost:3000`, which the Android Expo Go flow cannot open. See Section 8, item 11, and the 2026-11-11 progress entry. Do not mark password reset as fully tested.
+Known problem (root cause confirmed 2026-11-11): Supabase Auth discards a `redirect_to` whose host is a non-loopback IP address before it evaluates the Redirect URLs allow list, then silently substitutes the project Site URL (`http://localhost:3000`). The `exp://192.168.0.108:8081/--/reset-password` allow-list entry therefore cannot work. See Section 8, item 11.
+
+Current code state (2026-11-11): `buildPasswordResetRedirectUrl()` is back to its pre-investigation form (`Linking.createURL('/reset-password')`, and `redirectTo` omitted when the result is empty) and the temporary debug log has been removed.
 
 Missing:
-- One controlled reset attempt with a verified redirect URL.
+- A redirect target with a hostname (or a loopback host) that Supabase will accept.
 - Device testing of the recovery link, token/code exchange, and new-password submission.
-- Removal of the temporary `[password-reset] redirectTo:` debug log after verification (needs approval).
 
 ---
 
@@ -938,36 +939,62 @@ The user has since verified on the device that the donor dashboard layout issue 
 
 ## 11. Password Reset Email Redirect (Expo Go)
 
-**Status:** OPEN — under investigation, rate-limited
+**Status:** OPEN — root cause confirmed 2026-11-11, not fixed
 
-The password reset screens and helpers exist, and `tsc --noEmit` passes, but the
-reset email produced a link containing `redirect_to=http://localhost:3000`. That
-target is not reachable from the Android Expo Go flow, so the recovery link
-cannot open the app.
+The password reset screens and helpers exist, and `tsc --noEmit` passes, but reset
+emails still arrive as `http://localhost:3000/#access_token=…`, which the Android
+Expo Go flow cannot open.
+
+Root cause (verified against the Supabase Auth source, read-only):
+- `utilities.IsRedirectURLValid` rejects any redirect URL whose host is a
+  non-loopback IP address (`net.ParseIP(host)` → `ip.IsLoopback()` must be true)
+  **before** it consults the Redirect URLs allow list.
+- `utilities.GetReferrer` then silently falls back to `config.SiteURL`, which is
+  still `http://localhost:3000`, so the client receives no error and the email
+  encodes the Site URL.
+- Consequence: `exp://192.168.0.108:8081/--/reset-password` can never be accepted,
+  regardless of the allow-list entry.
 
 Actions taken (2026-11-11):
-- Added the Expo Go redirect URL to the Development Supabase project's Redirect
-  URLs (allow list): `exp://192.168.0.108:8081/--/reset-password`.
-- Added a development-only temporary log in `buildPasswordResetRedirectUrl()`
-  that prints `[password-reset] redirectTo:` (no email, password or token).
-- Restarted Metro; the app is served at `exp://192.168.0.108:8081`.
+- The temporary `[password-reset] redirectTo:` debug log was removed and
+  `buildPasswordResetRedirectUrl()` was rolled back to its pre-investigation form.
+- The Development allow-list entry was left in place (harmless, currently unused).
 
-Not yet confirmed:
-- The debug line has not appeared yet. It is emitted only when the reset request
-  is submitted, not when the Forgot Password screen is opened.
-- Whether the newly allowed redirect is actually accepted and embedded in the
-  email.
-
-Current blocker: Supabase returned `Too many requests` after repeated reset
-attempts. Further attempts are paused until the rate limit clears.
+Valid options for a later approved change:
+- Serve Expo Go through a hostname instead of the LAN IP (`expo start --tunnel`,
+  allow-list e.g. `exp://*.exp.direct/**`), so the host is not an IP.
+- Use a loopback host (`exp://localhost:8081/--/reset-password`) with
+  `adb reverse tcp:8081 tcp:8081` and `expo start --localhost`; loopback is the
+  one IP form the validator accepts.
+- Move to a development/release build and allow-list the app scheme
+  (`bloodmanagementapp://reset-password`), which has no IP host.
+- Or replace the redirect link with an email OTP code flow (no redirect at all).
 
 Rules for the next session:
-- Make **one** controlled reset attempt (BEN-A) and inspect the Metro log.
-- Do not mark password reset as tested until the redirect and device flow are verified.
+- Do not mark password reset as tested until a reset link opens `reset-password`
+  and a new password is saved.
 - Do not expose or request reset tokens.
 - Do not create duplicate test accounts.
 - Do not enable custom SMTP or change unrelated Supabase settings without approval.
-- Keep the temporary debug log until verification is complete; remove it afterwards with approval.
+
+## 12. Cancelled requests stayed in the active list (RESOLVED 2026-11-11)
+
+"My Blood Requests" rendered every row returned by
+`beneficiary_list_my_blood_requests`, which intentionally returns all owned
+requests (open and cancelled). After a successful cancellation the screen
+reloaded (`await load()`) and displayed the same request with status `CANCELLED`,
+so cancelled requests never left the list.
+
+Fix (2026-11-11, UI only): `src/app/my-blood-requests.tsx` keeps the original
+`requests` state (all statuses) and derives `activeRequests` filtered to
+`status === 'open'`; only that list is rendered, and the empty state reads
+"No Requests / Active requests you create will appear here." Cancellation
+confirmation, the success alert and the reload behaviour are unchanged.
+
+Cancelled rows remain in `public.blood_requests` (`status`, `cancelled_at`,
+`updated_at`) together with their interest rows for audit/history, and the donor
+list was already server-filtered to `status='open'`. TypeScript passed; not
+device-retested because `BLOOD_REQUEST_SERVICE_ACTIVE` is `false`.
 
 ---
 
@@ -1135,25 +1162,29 @@ After Blood Request is stable:
 - Hospital/blood bank workflows, if approved.
 - Additional reporting and analytics, if required.
 
-## Priority 10 — Verify Password Reset Redirect (Expo Go) — ACTIVE 2026-11-11
+## Priority 10 — Fix Password Reset Redirect (Expo Go) — ACTIVE 2026-11-11
 
 Files:
 - `src/app/forgot-password.tsx`
 - `src/app/reset-password.tsx`
 - `src/lib/password-reset.ts`
 
-Tasks, in order:
-1. Wait for the Supabase "Too many requests" rate limit to clear.
-2. Restart/warm Metro and confirm the app is served at `exp://192.168.0.108:8081`.
-3. Submit exactly one reset request for BEN-A.
-4. In the Metro log, check that `[password-reset] redirectTo:` shows an `exp://`
-   URL ending in `/--/reset-password`, and that it is not `http://localhost:3000`.
-5. Open the emailed reset link on the Android device and confirm the
-   `reset-password` screen accepts it and updates the password.
-6. Then request approval to remove the temporary debug log.
+Root cause (confirmed 2026-11-11): Supabase Auth rejects any `redirect_to` whose
+host is a non-loopback IP address and silently falls back to the project Site URL
+(`http://localhost:3000`). An `exp://<LAN-IP>` allow-list entry therefore cannot
+make the link work.
+
+Tasks, in order (each needs explicit approval before it is performed):
+1. Choose one transport: Expo tunnel (hostname), `adb reverse` + `expo start
+   --localhost` (loopback), or a development/release build using the app scheme.
+2. Add only the matching redirect URL (or a narrow wildcard) to the Development
+   project's Redirect URLs.
+3. Reload the app and request one reset email for BEN-A; confirm the link host
+   matches the chosen transport.
+4. Open the link on the device, save a new password, and sign in with it.
 
 Constraints:
-- Do not mark password reset as fully tested until steps 4 and 5 pass.
+- Do not mark password reset as fully tested until step 4 passes.
 - Do not expose or request reset tokens.
 - Do not create duplicate test accounts.
 - Do not enable custom SMTP or change unrelated Supabase settings without approval.
@@ -1164,11 +1195,11 @@ Constraints:
 
 ## Latest Git Commit
 
-    fd86e26b600ac19f41f44424de1227e1b8d5bf23
+    99842415a7754e43753918e9f9fb7fffe6db0240
 
 Commit message:
 
-    harden client trigger references and maintain privileges
+    docs: update project context for password reset investigation
 
 Branch:
 
@@ -1178,30 +1209,27 @@ Remote:
 
     origin/main
 
-Last confirmed state:
+Last confirmed state before the 2026-11-11 closing commit:
 
     main...origin/main
 
-Working tree has six modified, unstaged files and five untracked files (not committed or pushed). Snapshot observed 2026-11-11:
-
-Modified:
+Closing commit (2026-11-11): the pending work below is committed together with
+this documentation update; the resulting hash is recorded in Git history.
 
     PROJECT_CONTEXT.md
     docs/blood-request-management.md
+    docs/donor-donation-eligibility.md
     src/app/donor-dashboard.tsx
     src/app/forgot-password.tsx
-    src/lib/blood-requests.ts
-    supabase/migrations/20261028000100_blood_request_management.sql
-
-Untracked:
-
-    docs/donor-donation-eligibility.md
+    src/app/my-blood-requests.tsx
     src/app/reset-password.tsx
     src/lib/donor-eligibility.ts
     src/lib/password-reset.ts
     supabase/migrations/20261027000100_donor_donation_eligibility.sql
+    supabase/migrations/20261028000100_blood_request_management.sql
 
-`PROJECT_CONTEXT.md` is modified both by earlier documentation work and by this update.
+After that commit the working tree is clean. `BLOOD_REQUEST_SERVICE_ACTIVE` and
+`DONOR_ELIGIBILITY_SERVICE_ACTIVE` remain `false`.
 
 ## Password Reset Files
 
@@ -1211,19 +1239,35 @@ Untracked:
 
     src/lib/password-reset.ts
 
-Temporary development-only debug log (remove after redirect verification, with approval):
+Current state (2026-11-11 rollback): the temporary `[password-reset] redirectTo:`
+debug log was removed and `buildPasswordResetRedirectUrl()` is back to its
+pre-investigation form (`Linking.createURL('/reset-password')`, `''` on failure).
+No debug logging remains in these files.
 
-    console.log('[password-reset] redirectTo:', url);
-
-It sits inside `buildPasswordResetRedirectUrl()` and contains no email, password or token.
-
-Expo Go redirect URL registered in the Development Supabase project's Redirect URLs:
+Redirect URL registered in the Development Supabase project (kept, but currently
+ineffective because Supabase rejects non-loopback IP hosts):
 
     exp://192.168.0.108:8081/--/reset-password
 
 Development Metro host used on 2026-11-11:
 
     exp://192.168.0.108:8081
+
+## Cancelled Blood Request List
+
+File:
+
+    src/app/my-blood-requests.tsx
+
+Behaviour since 2026-11-11:
+
+    const activeRequests = requests.filter(
+      (request) => request.status === 'open'
+    );
+
+`requests` still holds every status returned by the RPC; only `activeRequests` is
+rendered, and the empty state reads "No Requests". Cancelled rows stay in
+`public.blood_requests` for audit/history.
 
 ## Blood Request Activation Gate
 
@@ -1331,9 +1375,15 @@ Not tested:
 
 ### Password Reset Testing (2026-11-11)
 
-- TypeScript check (`node_modules\.bin\tsc.cmd --noEmit`) passed twice for `forgot-password.tsx`, `reset-password.tsx` and `password-reset.ts`.
-- Not tested: submitting a reset request, verifying the generated `redirectTo`, opening the recovery link on the Android device, and saving a new password.
-- Reset attempts were stopped by Supabase `Too many requests` on 2026-11-11. Treat password reset as unverified at runtime.
+- TypeScript check (`npx.cmd tsc --noEmit --pretty false`) passed with exit code 0 for `forgot-password.tsx`, `reset-password.tsx` and `password-reset.ts`, including after the rollback.
+- Root cause of the `localhost:3000` redirect was confirmed from the Supabase Auth source (non-loopback IP hosts are rejected before the allow list) without executing SQL or changing settings.
+- Not tested: a reset link opening `reset-password` on the device, exchanging the recovery session, and saving a new password. Treat password reset as unverified at runtime.
+
+### Cancelled Blood Request UI Testing (2026-11-11)
+
+- R1 beneficiary flow was exercised by the owner: a request was created and then cancelled successfully.
+- The follow-up UI fix is TypeScript-clean (`tsc --noEmit`, exit code 0).
+- Not re-tested on the device because `BLOOD_REQUEST_SERVICE_ACTIVE` is `false`; the next approved activation run should confirm the cancelled row disappears and that "No Requests" appears when nothing is open.
 
 ---
 
@@ -1353,11 +1403,14 @@ Current Git branch:
 
 Latest confirmed commit:
 
-    fd86e26b600ac19f41f44424de1227e1b8d5bf23
+    99842415a7754e43753918e9f9fb7fffe6db0240
 
 Commit message:
 
-    harden client trigger references and maintain privileges
+    docs: update project context for password reset investigation
+
+The 2026-11-11 closing commit adds the pending eligibility, blood-request,
+password-reset and cancelled-request UI work recorded in Section 10.
 
 Start by:
 1. Inspecting `git status -sb`.
@@ -1367,7 +1420,7 @@ Start by:
 
 The Donor Dashboard layout issue is RESOLVED (see Section 8) and is not the top-priority task. See Section 9, "Current Development Priority — Complete the Core Application", for the current priorities.
 
-The currently active task (2026-11-11) is Priority 10: verify the password reset redirect in Android Expo Go. Password reset is implemented but NOT runtime-tested, and a reset attempt must wait until the Supabase rate limit clears.
+The currently active task (2026-11-11) is Priority 10: fix the password reset redirect in Android Expo Go. The root cause is known (Supabase rejects non-loopback IP redirect hosts and silently falls back to the Site URL), so the next step is to choose an approved hostname/loopback transport. Password reset is implemented but NOT runtime-tested.
 
 Only make the minimal necessary changes to `src/app/donor-dashboard.tsx`. Preserve all existing features, including Blood Request navigation, profile photo, donor information, availability, and logout.
 
@@ -1508,3 +1561,21 @@ Status snapshot: 2026-11-09 (deployment state updated 2026-11-10 — see the pro
 - Next step: after the rate limit clears, make **one** controlled BEN-A reset attempt and inspect the Metro log for `[password-reset] redirectTo:`, verifying it is an `exp://…/--/reset-password` URL and not `localhost:3000`. Then open the emailed link on the device (without exposing or requesting the reset token).
 - Constraints carried forward: do not expose or request reset tokens, do not create duplicate test accounts, do not enable custom SMTP or change unrelated Supabase settings without approval. Keep the temporary debug log until redirect debugging is complete and remove it afterwards with approval (documented as Priority 10 in Section 9).
 - Documentation updated in this pass: this file only (Sections 4, 7, 8, 9, 10 and this entry). Nothing was staged, committed or pushed.
+
+### Progress entry - 2026-11-11 (password reset redirect root cause; investigation/fix rollback)
+
+- R1 testing was completed successfully: BEN-A created a blood request and then cancelled it.
+- A reset email requested after the Constants-based redirect fix still arrived as `http://localhost:3000/#access_token=…`.
+- Read-only investigation confirmed the root cause in the Supabase Auth source: `utilities.IsRedirectURLValid` rejects any `redirect_to` whose host is a non-loopback IP address before it evaluates the Redirect URLs allow list, and `utilities.GetReferrer` then silently substitutes `config.SiteURL`. The Development entry `exp://192.168.0.108:8081/--/reset-password` therefore cannot be honoured; the machine LAN address is still 192.168.0.108, so this is not an IP-change mismatch.
+- The password-reset investigation/fix code in `src/lib/password-reset.ts` was rolled back to its pre-investigation form (original `Linking.createURL('/reset-password')`, `redirectTo` omitted when empty) and the temporary `[password-reset] redirectTo:` debug log was removed. `src/app/forgot-password.tsx` and `src/app/reset-password.tsx` were not modified.
+- `BLOOD_REQUEST_SERVICE_ACTIVE` was restored to `false` in `src/lib/blood-requests.ts`; the only local edit had been that flag.
+- TypeScript (`npx.cmd tsc --noEmit --pretty false`) passed with exit code 0 after the rollback.
+- No reset email was sent, no Supabase setting or SQL was changed, and the Main project `zmxtxuuooviwjsdghqlt` was not accessed. Valid future options are recorded in Section 8, item 11 and Section 9, Priority 10.
+
+### Progress entry - 2026-11-11 (Cancelled Blood Request UI fix; closing upload)
+
+- Confirmed read-only that `beneficiary_list_my_blood_requests` returns all caller-owned requests (open and cancelled) and that "My Blood Requests" rendered every row, so a cancelled request stayed visible with status `CANCELLED`. The list did reload on focus and after cancellation; the data source was the reason it reappeared.
+- Implemented the approved minimal UI fix in `src/app/my-blood-requests.tsx`: the original `requests` state is unchanged (all statuses) and a derived `activeRequests` list (`status === 'open'`) is rendered; the empty state now reads "No Requests / Active requests you create will appear here." Cancellation confirmation, success alert and `await load()` reload behaviour are unchanged. No other file was modified.
+- Cancelled records remain in `public.blood_requests` (`status`, `cancelled_at`, `updated_at`) with their interest rows, so audit/history is preserved; the donor list was already server-filtered to `status='open'`.
+- TypeScript (`npx.cmd tsc --noEmit --pretty false`) passed with exit code 0. Not device-retested because `BLOOD_REQUEST_SERVICE_ACTIVE` is `false`.
+- This entry and the pending approved work were uploaded in the 2026-11-11 closing commit on `main`; the hash is recorded in Git history. No SQL was executed, no Supabase configuration was changed, and the Main project was not accessed.

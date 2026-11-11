@@ -10,21 +10,29 @@ import {
   StyleSheet,
   Keyboard,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+
+import { requestPasswordReset } from '../lib/password-reset';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
 
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [isSent, setIsSent] = useState(false);
 
-  const handleResetPassword = () => {
+  const handleResetPassword = async () => {
+    if (isSending) return;
+
     Keyboard.dismiss();
 
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail) {
       setEmailError('Email address is required.');
@@ -37,11 +45,26 @@ export default function ForgotPasswordScreen() {
     }
 
     setEmailError('');
+    setFormError('');
+    setIsSending(true);
 
-    Alert.alert(
-      'Demo Password Reset',
-      'Your email format is valid. Password reset emails will be enabled after Supabase Authentication is connected.'
-    );
+    try {
+      const result = await requestPasswordReset(cleanEmail);
+
+      if (!result.ok) {
+        setFormError(result.message);
+        return;
+      }
+
+      // Deliberately generic: never reveal whether the address has an account.
+      setIsSent(true);
+      Alert.alert(
+        'Check Your Email',
+        'If an account exists for this email address, a password reset link has been sent.'
+      );
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -81,13 +104,34 @@ export default function ForgotPasswordScreen() {
           <Text style={styles.errorText}>{emailError}</Text>
         ) : null}
 
+        {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+
+        {isSent ? (
+          <View style={styles.successCard}>
+            <Text style={styles.successTitle}>Check your email</Text>
+            <Text style={styles.successText}>
+              If an account exists for this email address, a password reset link has been
+              sent. The link opens the app so you can choose a new password.
+            </Text>
+            <Text style={styles.successHint}>
+              Didn&apos;t receive it? Check spam, wait a minute, then try again.
+            </Text>
+          </View>
+        ) : null}
+
         <Pressable
-          style={styles.resetButton}
-          onPress={handleResetPassword}
+          style={[styles.resetButton, isSending ? styles.disabled : null]}
+          onPress={() => void handleResetPassword()}
+          disabled={isSending}
+          accessibilityRole="button"
         >
-          <Text style={styles.resetButtonText}>
-            Send Reset Link
-          </Text>
+          {isSending ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.resetButtonText}>
+              {isSent ? 'Send Again' : 'Send Reset Link'}
+            </Text>
+          )}
         </Pressable>
 
         <Pressable
@@ -98,7 +142,7 @@ export default function ForgotPasswordScreen() {
         </Pressable>
 
         <Text style={styles.demoNote}>
-          Demo mode: No password reset email is sent yet.
+          For your security, we do not confirm whether an email address is registered.
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -203,5 +247,38 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     marginTop: 30,
+  },
+
+  disabled: {
+    opacity: 0.6,
+  },
+
+  successCard: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 14,
+  },
+
+  successTitle: {
+    color: '#166534',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+
+  successText: {
+    color: '#166534',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  successHint: {
+    color: '#4B5563',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
   },
 });
