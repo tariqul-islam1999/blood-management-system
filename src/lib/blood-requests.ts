@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 
 // Enable only after the Blood Request migration has been separately deployed and
 // verified in the intended Supabase environment. Every RPC wrapper fails closed.
-export const BLOOD_REQUEST_SERVICE_ACTIVE: boolean = false;
+export const BLOOD_REQUEST_SERVICE_ACTIVE: boolean = true;
 export const BLOOD_REQUEST_SERVICE_MESSAGE =
   'Blood Request service is not available yet because its backend is not enabled.';
 
@@ -68,10 +68,18 @@ export type BloodRequestErrorCode =
   | 'duplicate'
   | 'busy'
   | 'request'
-  | 'unknown-outcome';
+  | 'unknown-outcome'
+  | 'network';
 
 export class BloodRequestError extends Error {
-  constructor(public readonly code: BloodRequestErrorCode, message: string) {
+  constructor(
+    public readonly code: BloodRequestErrorCode,
+    message: string,
+    // Preserved Supabase/PostgREST diagnostic detail (concise diagnostics only;
+    // never shown in the UI and never contains secrets or personal data).
+    public readonly serverCode?: string,
+    public readonly serverMessage?: string,
+  ) {
     super(message);
     this.name = 'BloodRequestError';
   }
@@ -104,32 +112,38 @@ function requireActivation(): void {
   }
 }
 
-function rpcError(code: string, mutation = false): BloodRequestError {
+function rpcError(code: string, mutation = false, serverMessage?: string): BloodRequestError {
+  const serverCode = code.length > 0 ? code : undefined;
+  const failure = (kind: BloodRequestErrorCode, message: string): BloodRequestError =>
+    new BloodRequestError(kind, message, serverCode, serverMessage);
   if (['PGRST301', 'PGRST302', 'PGRST303', '28000'].includes(code)) {
-    return new BloodRequestError('expired', 'Your session has expired. Please log in again.');
+    return failure('expired', 'Your session has expired. Please log in again.');
   }
   if (code === '42501') {
-    return new BloodRequestError('unauthorized', 'Your active account is not allowed to perform this action.');
+    return failure('unauthorized', 'Your active account is not allowed to perform this action.');
   }
   if (['PGRST202', '42883'].includes(code)) {
-    return new BloodRequestError('inactive', BLOOD_REQUEST_SERVICE_MESSAGE);
+    return failure('inactive', BLOOD_REQUEST_SERVICE_MESSAGE);
   }
   if (code === '22023' || code === '22P02') {
-    return new BloodRequestError('invalid', 'Check the request details and try again.');
+    return failure('invalid', 'Check the request details and try again.');
   }
   if (code === 'P0002') {
-    return new BloodRequestError('stale', 'This request is no longer available. Refresh the list.');
+    return failure('stale', 'This request is no longer available. Refresh the list.');
   }
   if (code === '55000') {
-    return new BloodRequestError('stale', 'This request is no longer eligible. Refresh the list.');
+    return failure('stale', 'This request is no longer eligible. Refresh the list.');
   }
   if (code === '23505') {
-    return new BloodRequestError('duplicate', 'You have already expressed interest in this request.');
+    return failure('duplicate', 'You have already expressed interest in this request.');
   }
   if (['55P03', '40P01'].includes(code)) {
-    return new BloodRequestError('busy', 'This request is being updated. Refresh and try again.');
+    return failure('busy', 'This request is being updated. Refresh and try again.');
   }
-  return new BloodRequestError(
+  if (code.length === 0) {
+    return new BloodRequestError('network', 'Could not reach the server. Check your connection and retry.', undefined, serverMessage);
+  }
+  return failure(
     mutation ? 'unknown-outcome' : 'request',
     mutation
       ? 'The result could not be confirmed. Refresh before trying again.'
@@ -320,14 +334,31 @@ export async function donorExpressInterest(requestId: string): Promise<InterestR
     const { data, error } = await supabase.rpc('donor_express_interest', {
       target_request_id: requestId,
     });
-    if (error) throw rpcError(error.code, true);
+    if (error) {
+      // Preserve the original server code/message. Map only this RPC's own duplicate
+      // condition (SQLSTATE 55000 with 'Interest already recorded'); other 55000
+      // errors keep the generic stale/state behavior.
+      if (error.code === '55000' && /interest already recorded/i.test(error.message ?? '')) {
+        throw new BloodRequestError('duplicate', 'You have already expressed interest in this request.', error.code, error.message);
+      }
+      throw rpcError(error.code, true, error.message);
+    }
     const result = rows(data, 'Your interest could not be confirmed.');
     if (result.length !== 1 || !isInterestResult(result[0]) || result[0].request_id !== requestId) {
       throw new BloodRequestError('unknown-outcome', 'Your interest could not be confirmed. Refresh before trying again.');
     }
     return result[0];
   } catch (error) {
-    if (error instanceof BloodRequestError) throw error;
+    if (error instanceof BloodRequestError) {
+      // Concise, safe diagnostic: normalized code plus preserved server code/message.
+      // Never logs request IDs, tokens, or personal data.
+      console.warn(
+        `[blood-requests] donor_express_interest failed: code=${error.code}` +
+        `${error.serverCode ? ` serverCode=${error.serverCode}` : ''}` +
+        `${error.serverMessage ? ` serverMessage=${error.serverMessage}` : ''}`,
+      );
+      throw error;
+    }
     throw rpcError('', true);
   }
 }

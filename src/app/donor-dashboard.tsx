@@ -700,7 +700,7 @@ export default function DonorDashboard() {
 
         <View style={styles.bloodRequestCard}>
           <Text style={styles.availabilityTitle}>Blood Requests</Text>
-          <Text style={styles.availabilityDescription}>Browse matching open blood requests when the Blood Request backend is enabled.</Text>
+          <Text style={styles.availabilityDescription}>Browse matching open blood requests. Accepting a request starts the donation steps and reveals your identity to that beneficiary.</Text>
           <Pressable style={styles.secondaryButton} onPress={() => router.push('/open-blood-requests' as Href)} disabled={isUpdating} accessibilityRole="button">
             <Text style={styles.secondaryButtonText}>Open Blood Requests</Text>
           </Pressable>

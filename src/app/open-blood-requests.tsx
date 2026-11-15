@@ -1,7 +1,12 @@
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { Href, useFocusEffect, useRouter } from 'expo-router';
+import {
+  DONATION_WORKFLOW_SERVICE_ACTIVE,
+  DonationWorkflowError,
+  donorAcceptBloodRequest,
+} from '../lib/donation-workflow';
 
 import {
   BLOOD_REQUEST_SERVICE_ACTIVE,
@@ -13,10 +18,12 @@ import {
 } from '../lib/blood-requests';
 
 export default function OpenBloodRequestsScreen() {
+  const router = useRouter();
   const [requests, setRequests] = useState<OpenBloodRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [interestId, setInterestId] = useState<string | null>(null);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true); setError(null);
@@ -29,6 +36,35 @@ export default function OpenBloodRequestsScreen() {
     } finally { setIsLoading(false); }
   }, []);
   useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  const accept = (request: OpenBloodRequest) => {
+    if (acceptingId || !DONATION_WORKFLOW_SERVICE_ACTIVE) return;
+    Alert.alert(
+      'Accept This Request?',
+      'Accepting means you will donate for this request. The beneficiary will then see your identity. You can have only one active donation at a time.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Accept', onPress: () => void confirmAccept(request.request_id) },
+      ],
+    );
+  };
+  const confirmAccept = async (requestId: string) => {
+    setAcceptingId(requestId);
+    try {
+      const accepted = await donorAcceptBloodRequest(requestId);
+      Alert.alert('Request Accepted', 'You have accepted this request. Continue with the donation steps.');
+      router.push({
+        pathname: '/active-donation',
+        params: { engagement_id: accepted.engagement_id, status: accepted.status },
+      } as unknown as Href);
+    } catch (caught) {
+      const message = caught instanceof DonationWorkflowError && caught.code === 'duplicate'
+        ? 'This request already has a donation. Refresh the list.'
+        : caught instanceof Error ? caught.message : 'Unable to accept this request.';
+      Alert.alert('Acceptance Not Confirmed', message);
+      await load();
+    } finally { setAcceptingId(null); }
+  };
 
   const expressInterest = (request: OpenBloodRequest) => {
     if (interestId || !BLOOD_REQUEST_SERVICE_ACTIVE || request.has_expressed_interest) return;
@@ -54,7 +90,15 @@ export default function OpenBloodRequestsScreen() {
     {!BLOOD_REQUEST_SERVICE_ACTIVE ? <Notice /> : isLoading ? <Loading /> : error ? <Retry message={error} onRetry={() => void load()} /> : requests.length === 0 ? <Empty onRetry={() => void load()} /> : requests.map((request) => <View key={request.request_id} style={styles.card}>
       <View style={styles.cardHeader}><Text style={styles.bloodGroup}>{request.blood_group}</Text><Text style={[styles.urgency, request.urgency === 'urgent' && styles.urgent]}>{request.urgency === 'urgent' ? 'URGENT' : 'ROUTINE'}</Text></View>
       <Text style={styles.detail}>{request.units_requested} unit{request.units_requested === 1 ? '' : 's'} requested</Text><Text style={styles.detail}>Needed by: {request.needed_by}</Text><Text style={styles.detail}>Approximate area: {request.local_area}, {request.thana}, {request.district}</Text>
-      {request.has_expressed_interest ? <Text style={styles.interested}>Interest recorded</Text> : <Pressable style={[styles.primaryButton, interestId === request.request_id && styles.disabled]} disabled={interestId !== null} onPress={() => expressInterest(request)} accessibilityRole="button"><Text style={styles.primaryText}>{interestId === request.request_id ? 'Recording Interest...' : 'Express Interest'}</Text></Pressable>}
+      {request.has_expressed_interest ? (
+        DONATION_WORKFLOW_SERVICE_ACTIVE ? (
+          <Pressable style={[styles.primaryButton, acceptingId === request.request_id && styles.disabled]} disabled={acceptingId !== null} onPress={() => accept(request)} accessibilityRole="button"><Text style={styles.primaryText}>{acceptingId === request.request_id ? 'Accepting...' : 'Accept Request'}</Text></Pressable>
+        ) : (
+          <Text style={styles.interested}>Interest recorded</Text>
+        )
+      ) : (
+        <Pressable style={[styles.primaryButton, interestId === request.request_id && styles.disabled]} disabled={interestId !== null} onPress={() => expressInterest(request)} accessibilityRole="button"><Text style={styles.primaryText}>{interestId === request.request_id ? 'Recording Interest...' : 'Express Interest'}</Text></Pressable>
+      )}
     </View>)}
     {BLOOD_REQUEST_SERVICE_ACTIVE && <Text style={styles.disclaimer}>Expressing interest means willingness to help only. It does not complete a donation or confirm medical eligibility.</Text>}
   </ScrollView></SafeAreaView>;

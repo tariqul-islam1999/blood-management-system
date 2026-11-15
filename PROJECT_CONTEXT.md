@@ -186,6 +186,8 @@ The exact location of the Supabase client, authentication helpers, and other sha
 |---|---|
 | `super-admin-management.md` | Documents the Super Admin Management draft. |
 | `blood-request-management.md` | Documents Blood Request database design, deployment prerequisites, and testing requirements. |
+| `donation-workflow.md` | Detailed P4 Complete Donation Workflow specification (Revision 4, 2026-11-12): lifecycle, beneficiary live status, 48-hour follow-up, eligibility linkage, approved notification architecture. |
+| `p4-technical-design.md` | P4 technical design (2026-11-12): database model, status transitions, SECURITY DEFINER/INVOKER classification, private-Broadcast live status, concurrency (D-6 Option 2), security, implementation plan. |
 
 ### `supabase/migrations/`
 
@@ -432,6 +434,17 @@ The following features were not confirmed implemented:
 
 Do not assume these features exist.
 
+The Complete Donation Workflow (P4) is now specified in `docs/donation-workflow.md`
+(Revision 3) and `docs/p4-technical-design.md`, but it is **not implemented**: the items above
+remain NOT STARTED. The specification is documentation only; all P4 requirement decisions are
+owner-approved.
+
+The P4 donation workflow is now **implemented in the app and enabled** in BMS-Development. The donor
+workflow was device-tested end-to-end through `reached_home_safely`; the two-day follow-up is
+implemented but **not yet submitted because it is time-gated** (48 hours after `reached_home_safely`).
+Realtime live beneficiary status (P4.3/P4.4) and notifications (P4.5) are **not implemented**. See
+"Current Database Status" and the 2026-11-16 progress entry.
+
 ---
 
 # 5. Database Design
@@ -546,7 +559,17 @@ Donor-facing request cards must not expose:
 - Precise private notes.
 - Other private identifying information.
 
-Beneficiary request listing returns aggregate interest counts only. It must not reveal donor identities or contact details.
+Beneficiary request listing returns aggregate interest counts only **before donor
+acceptance**, and must not reveal donor identities or contact details during browsing.
+
+Scoped P4 clarification (2026-11-12) — see `docs/donation-workflow.md`:
+- Before a donor accepts a beneficiary's request, that beneficiary cannot see the donor's
+  identity.
+- After a donor accepts the beneficiary's request, **that specific beneficiary** can see
+  the accepting donor's identity.
+- Donor identity must never be exposed to unrelated beneficiaries (nor to other donors).
+- All existing privacy and authorization requirements outside this P4 clarification remain
+  unchanged. Donor contact details are still not exposed in donor search results.
 
 ## RPC Functions
 
@@ -655,7 +678,11 @@ until the actual live database state and migration history have been safely reco
 4. Donors can express interest in a request.
 5. Donor interest does not mean donation completion or medical clearance.
 6. Donor-facing request cards must preserve beneficiary privacy.
-7. Beneficiaries see aggregate interest counts, not donor identities.
+7. Beneficiaries see aggregate interest counts, not donor identities, **before donor
+   acceptance**. After a donor accepts a beneficiary's request, that beneficiary can see
+   the accepting donor's identity (scoped P4 clarification, 2026-11-12; see
+   `docs/donation-workflow.md`). Donor identity is never exposed to unrelated
+   beneficiaries.
 8. Expired requests must not appear in the donor listing.
 9. The server rejects interest in expired requests.
 10. Donor eligibility is checked server-side.
@@ -663,6 +690,80 @@ until the actual live database state and migration history have been safely reco
 12. Blood request creation and interest must never display success unless the real RPC confirms success.
 13. No fake requests or fabricated interest counts are allowed.
 14. The Blood Request activation gate must remain disabled until backend deployment and security testing are complete.
+
+## Donation Workflow (P4) Decisions — 2026-11-12
+
+The following P4 decisions were confirmed by the project owner on 2026-11-12. The detailed
+workflow specification is `docs/donation-workflow.md` (Revision 4) and the technical design is
+`docs/p4-technical-design.md`. These are approved requirements; the underlying P4 feature is
+**not implemented** yet.
+
+1. A donor accepts/selects a matching beneficiary blood request (donor-driven; there is
+   no separate beneficiary-acceptance step).
+2. The beneficiary sees the accepting donor's identity **only after** the donor accepts
+   that beneficiary's request.
+3. The donor marks **Reached Location**.
+4. The donor marks **Donation Started**.
+5. The donor marks **Donation Ended**.
+6. **Donation Ended** means the blood donation itself is complete. It updates the donor's
+   last donation date and starts the four-month eligibility cooldown, following the
+   existing donor-eligibility contract (`docs/donor-donation-eligibility.md`).
+7. The one-active-donation restriction remains active until **Reached Home Safely**.
+8. **Reached Home Safely** completes the full donation cycle and releases the
+   one-active-donation restriction.
+9. The two-day health follow-up timer starts from **Reached Home Safely**.
+10. The associated beneficiary can see donation status updates live / in real time.
+11. The beneficiary who received blood from the donor can view the donor's submitted
+    two-day follow-up responses.
+12. GPS / location tracking is out of scope.
+
+Additional owner-approved P4 decisions (2026-11-12), detailed in `docs/p4-technical-design.md`:
+
+- **Live status:** Supabase **Private Broadcast** (private channels; database-originated
+  broadcast; `realtime.messages` policies restrict access to the associated donor, beneficiary,
+  and authorized Admin/Super Admin via an authorization helper). Application tables remain
+  RPC-only/grant-free. Distinct from the Realtime project setting and the migration, both of
+  which still require separate implementation authorization.
+- **Follow-up timer:** **elapsed 48 hours** from Reached Home Safely, stored as an authoritative
+  due timestamp; follow-up "due" is computed from that timestamp plus the submission state (no
+  separate `HEALTH_FOLLOW_UP_DUE` status is stored).
+- **Follow-up questionnaire:** approved (general wellbeing questions, not medical advice).
+- **Feeling vs. follow-up:** **separate submissions** (never merged).
+- **Notification architecture:** approved (Expo Push, secure token storage, Supabase Edge
+  Functions, scheduled server-side job, DB outbox/records, retry/failure/dedup).
+- **Admin visibility:** Admin and Super Admin may view donation details — **including donor and
+  beneficiary identities** — and follow-up evaluation per their administrative role; unnecessary
+  exposure of donor private contact information is prohibited; administrative reads are recorded
+  in the audit design.
+- **Storage/audit:** one follow-up response per engagement; append-only status-event history;
+  preserve the original submitted response; donor–beneficiary relationship held by the
+  engagement record.
+- **Concurrency (D-6, Option 2):** preserve the `blood_requests.status` contract (`open`/
+  `cancelled`); do not modify the M7 CHECK; identify accepted requests via the engagement with
+  `UNIQUE (request_id)`.
+- **P4.1 schema scope (D-11):** the first migration contains exactly three tables —
+  `donation_engagements`, `donation_status_events`, `donation_followup_responses` — with
+  constraints, indexes, RLS and privilege protections; **no `interest_id`**; **no `submitted_by`**;
+  both follow-up submission timestamps retained; `additional_comments` optional (≤ 500 chars); all
+  P4 historical foreign keys `ON DELETE RESTRICT`; one engagement per request; one active
+  engagement per donor until `reached_home_safely`; **mandatory non-decreasing lifecycle timestamp
+  order** (`selected_at ≤ reached_location_at ≤ donation_started_at ≤ donation_ended_at ≤
+  reached_home_safely_at`), each timestamp present exactly when its stage is reached and consistent
+  with `status`, enforced by row-level `CHECK` constraints (the legal transition order and actor
+  authorization are enforced by later RPCs). No functions, triggers, RPCs, grants, Realtime
+  policies, notification tables or application code in P4.1.
+- **Status-event actor (D-12):** `actor_role` **NOT NULL and donor-only**; `actor_id` **NOT NULL**;
+  no Admin/Super-Admin/system actor in the initial schema; the later RPC verifies `actor_id` equals
+  the engagement donor.
+- **Timestamp/follow-up (D-13):** `updated_at` is maintained by later RPCs (no automatic trigger in
+  P4.1); the follow-up submission RPC rejects submission before `follow_up_due_at` and writes the
+  response and `follow_up_submitted_at` **atomically with the same timestamp**.
+
+Residual implementation details (not requirement decisions): exact admin contact-field access and
+read filtering/pagination, notification delivery preferences and scheduler choice. Internal status
+identifiers use snake_case; `follow_up_due_at` is stored as an authoritative timestamp with
+follow-up "due" computed from it; no separate `HEALTH_FOLLOW_UP_DUE` status is stored; and the
+audit-event column names are fixed by D-11/D-12.
 
 ## Account Deletion (DEFERRED)
 
@@ -902,17 +1003,21 @@ The live Supabase migration history is missing or not reliably established.
 
 Do not push, reset, or replay migrations against production.
 
+P4.1 (`20261029000100`) was applied **manually** in the Development SQL Editor, so its CLI migration history is **UNRECORDED / NOT VERIFIED**. A future `db push` would fail-closed on the migration's own "P4.1 objects already exist" preflight. Reconcile history only through a separately approved action; do not run `migration repair` or `db push` as part of a documentation change.
+
 ## 8. Database Tests Not Executed
 
 **Status:** OPEN
 
 Not completed:
-- SQL parsing.
-- Migration execution.
+- SQL parsing — offline PostgreSQL 17 parsing of the P4.1 migration completed (`PARSE OK; top-level statements = 20`), but that is syntax-only.
+- Migration execution — the P4.1 migration was **manually** applied in BMS-Development (see the 2026-11-15 P4.1 apply entry); its CLI history is UNRECORDED / NOT VERIFIED, and this does not cover any other migration.
 - pgTAP tests.
 - ACL fault-injection tests.
 - Concurrency testing.
 - Real Supabase RPC integration testing.
+
+P4.1 structural tests (P4.7) remain **not complete**.
 
 `psql` and `pg_prove` were unavailable in the previous development environment.
 
@@ -996,6 +1101,19 @@ Cancelled rows remain in `public.blood_requests` (`status`, `cancelled_at`,
 list was already server-filtered to `status='open'`. TypeScript passed; not
 device-retested because `BLOOD_REQUEST_SERVICE_ACTIVE` is `false`.
 
+## 13. Beneficiary Dashboard shows previous card status after donation completion
+
+**Status:** OPEN — reported 2026-11-16, not fixed
+
+After a donation reaches completion, the Beneficiary Dashboard still displays the previous card
+status. The expected message is:
+
+> Blood donation complete! Please take care of the donor.
+
+Investigate read-only first (find where the beneficiary card status is derived and why it does not
+advance on donation completion), then implement the smallest approved frontend fix. Do not redesign the
+workflow.
+
 ---
 
 # 9. Next Steps
@@ -1017,6 +1135,20 @@ project documents:
 7. Two-day post-donation health follow-up.
 8. Admin features and reports.
 9. Frontend-backend integration and testing.
+
+The Complete Donation Workflow (P4) — acceptance, statuses, beneficiary live status,
+48-hour follow-up, and eligibility linkage — is specified in `docs/donation-workflow.md`
+(Revision 3) with the technical design in `docs/p4-technical-design.md`. All P4 requirement
+decisions are owner-approved. The P4.1 schema and P4.2 RPCs are **applied in BMS-Development**, and the
+donor donation workflow is **implemented in the app** (device-tested through `reached_home_safely`; the
+follow-up is pending its 48-hour gate). Realtime live status (P4.3/P4.4) and notifications (P4.5) are
+**not implemented**.
+
+**Next development step:** investigate the open Beneficiary Dashboard status bug (after donation
+completion it still shows the previous card status; expected "Blood donation complete! Please take care
+of the donor.") via a Cline read-only review, then implement the smallest approved frontend fix. Later
+phases: P4.7 behavioral tests, Realtime, notifications and admin donation screens (each after its own
+approval).
 
 Account Deletion is **DEFERRED** (see the "Account Deletion (DEFERRED)" decision
 in Section 6) and is not part of this priority list. The numbered priorities
@@ -1043,6 +1175,11 @@ For each feature, complete and verify all four layers:
 - Backend
 - Database
 - Integration
+
+The Complete Donation Workflow (item 4) is specified in `docs/donation-workflow.md` (Revision 3,
+2026-11-12) with the technical design in `docs/p4-technical-design.md`; together they are the
+detailed P4 workflow specification. The P4.1 schema has been manually applied in BMS-Development and
+verified, but no client-facing P4 feature is implemented yet.
 
 This sequence sets the primary feature-completion order. The earlier
 "Current Development Priority" list and the "Priority 1–9" subsections below
@@ -1403,11 +1540,11 @@ Current Git branch:
 
 Latest confirmed commit:
 
-    99842415a7754e43753918e9f9fb7fffe6db0240
+    2f69ff2b849e127288f42b71babbf1056ae8903a
 
 Commit message:
 
-    docs: update project context for password reset investigation
+    feat: donor eligibility UI, open-only request list and password reset flow
 
 The 2026-11-11 closing commit adds the pending eligibility, blood-request,
 password-reset and cancelled-request UI work recorded in Section 10.
@@ -1456,7 +1593,7 @@ Rules for AI assistants:
 
 ### Current Database Status
 
-Status snapshot: 2026-11-09 (deployment state updated 2026-11-10 — see the progress entry at the end).
+Status snapshot: 2026-11-09 (deployment state updated 2026-11-10; P4.1 manually applied and verified in BMS-Development 2026-11-15 — see the progress entry at the end).
 
 - Blood Request migration (M7 `20261028000100`): **applied to BMS-Development on 2026-11-10**. This supersedes the earlier "Drafted, not deployed" snapshot.
 - Four-month donor eligibility (`20261027000100`): **applied to BMS-Development on 2026-11-10** (previously recorded as a local draft).
@@ -1472,6 +1609,8 @@ Status snapshot: 2026-11-09 (deployment state updated 2026-11-10 — see the pro
 - M5 apply attempt (2026-11-09, approved): **failed** at statement 5 with `LOCK TABLE can only be used in transaction blocks (SQLSTATE 25P01)`. Cause: PostgreSQL rejects `LOCK TABLE` unless an explicit `BEGIN … COMMIT` block is open, while the CLI applies a file in one *implicit* transaction only. The whole file aborted, so this failure is not evidence of a partial commit. Nothing was applied, history is unchanged, and no partial objects exist (`donor_verification_history` absent, baseline tables untouched).
 - M5 correction (2026-11-09, approved Option 2): the standalone `LOCK TABLE public.donor_profiles IN ACCESS EXCLUSIVE MODE` was removed; the `ALTER TABLE ... SET DEFAULT / SET NOT NULL` statements remain the ACCESS EXCLUSIVE serialization point. The status preflight, constraints, RPCs, RLS and permission guards are unchanged. New M5 SHA-256: `3DE66B4C9C28E8E169FA41A5443C345F6D11354FF76292237FE2EA571D7E3ECF`. This correction was subsequently applied successfully — see the progress entry below.
 - No pgTAP test has ever been executed. Both revoke tests are LOCAL-ONLY: they inject `FOR ROLE supabase_admin` default ACLs and therefore need a local/self-hosted superuser environment, not hosted Development.
+- P4.1 donation schema (`supabase/migrations/20261029000100_p4_donation_schema.sql`) and P4.2 RPCs (`supabase/migrations/20261030000100_p4_donation_rpcs.sql`) are **applied in BMS-Development** and the donation workflow is **implemented in the app**. The Express Interest SQLSTATE 42702 bug was fixed by `supabase/migrations/20261116000100_fix_donor_express_interest_ambiguity.sql`, **applied and verified in Development** (per owner). Both activation flags are enabled. **CLI migration history for the manually-applied migrations remains UNRECORDED / NOT VERIFIED**; the P4.7 behavioral tests are not run. See the 2026-11-16 progress entry.
+- BMS-Development **pre-apply** read-only preflight (2026-11-15, before the manual apply; target `zbgqpqafvcxaoxxcuyxn`, PostgreSQL `17.11`, current database/user `postgres`) — **historical/superseded**: all six prerequisite tables existed, were owned by `postgres`, had RLS enabled and not forced; both required donor eligibility functions existed (definitions inspected, not executed); the required Supabase Auth schema, `auth.users`, `auth.uid()` and roles `anon`/`authenticated`/`service_role` existed; and the three target P4.1 tables and the nine expected index names were absent **at that time** (which is what allowed the apply to create them). All preflight queries were read-only; the Main project was not accessed.
 - Production database changes: Require explicit approval.
 
 ### Progress entry — 2026-11-09 (frontend activation and housekeeping)
@@ -1579,3 +1718,189 @@ Status snapshot: 2026-11-09 (deployment state updated 2026-11-10 — see the pro
 - Cancelled records remain in `public.blood_requests` (`status`, `cancelled_at`, `updated_at`) with their interest rows, so audit/history is preserved; the donor list was already server-filtered to `status='open'`.
 - TypeScript (`npx.cmd tsc --noEmit --pretty false`) passed with exit code 0. Not device-retested because `BLOOD_REQUEST_SERVICE_ACTIVE` is `false`.
 - This entry and the pending approved work were uploaded in the 2026-11-11 closing commit on `main`; the hash is recorded in Git history. No SQL was executed, no Supabase configuration was changed, and the Main project was not accessed.
+
+### Progress entry - 2026-11-12 (P4 donation workflow documentation synchronization)
+
+- Synchronized `PROJECT_CONTEXT.md` with the confirmed P4 Complete Donation Workflow
+  decisions (project-owner confirmed 2026-11-12). The detailed specification is
+  `docs/donation-workflow.md` (Revision 2).
+- Resolved the outdated identity-visibility statement in the Privacy Rules subsection.
+  The old line "Beneficiary request listing returns aggregate interest counts only. It
+  must not reveal donor identities or contact details." is replaced by the scoped P4 rule:
+  identity is hidden before donor acceptance; visible to that beneficiary only after the
+  donor accepts the request; never exposed to unrelated beneficiaries.
+- Updated Blood Request Decision 7 with the same scoped clarification.
+- Added a new "Donation Workflow (P4) Decisions — 2026-11-12" subsection in the Key
+  Decisions section recording the 12 confirmed P4 decisions, and marking the follow-up
+  questionnaire wording and notification architecture as proposals pending approval
+  (**superseded later on 2026-11-12: the questionnaire wording and notification architecture
+  are now owner-approved**; see the final-update progress entry below).
+- Linked `docs/donation-workflow.md` from the `docs/` table, the NOT STARTED list, the
+  Key Decisions section, and the Next Steps section.
+- Updated the Section 11 resume prompt's "Latest confirmed commit" to the current HEAD
+  `2f69ff2b849e127288f42b71babbf1056ae8903a` (previously recorded as `99842415...`).
+- No P4 feature is implemented; no application code, SQL, migration, database, Supabase,
+  or feature-flag change was made. No Git stage/commit/push was performed.
+
+### Progress entry - 2026-11-12 (P4 final documentation update — owner-approved decisions)
+
+- Recorded the eight owner-approved P4 decisions (2026-11-12) in this document and in
+  `docs/donation-workflow.md` (Revision 3) and `docs/p4-technical-design.md`:
+  - **D-6 concurrency (Option 2):** preserve the `blood_requests.status` contract
+    (`open`/`cancelled`); do not modify the M7 CHECK; identify accepted requests via the
+    engagement with `UNIQUE (request_id)`.
+  - **D-4 live status:** Supabase **Private Broadcast**; database-originated broadcast;
+    `realtime.messages` policies restrict access to the associated donor, beneficiary, and
+    authorized Admin/Super Admin; application tables stay RPC-only/grant-free; initial status via
+    RPC; re-fetch after reconnect; JWT/policy-cache limitation documented.
+  - **D-1:** elapsed 48-hour follow-up timer stored as an authoritative due timestamp.
+  - **D-2:** follow-up questionnaire wording approved.
+  - **D-8:** feeling and follow-up are separate submissions.
+  - **D-3:** notification architecture approved.
+  - **D-5/D-10:** admin visibility of donation details and follow-up evaluation approved (not
+    unresolved).
+  - **D-7/D-9:** one follow-up response per engagement; append-only status history; preserve the
+    original response; donor–beneficiary relationship via the engagement.
+- Added the `docs/p4-technical-design.md` row to the `docs/` table and referenced it throughout.
+- Updated the Next Steps section with the P4 next development step (separate implementation
+  authorization; ordered plan in `docs/p4-technical-design.md` §12).
+- No P4 feature is implemented. No application code, SQL, migration, database, Supabase project or
+  setting, or feature-flag change was made. No Git stage/commit/push was performed.
+
+### Progress entry - 2026-11-12 (P4.1 documentation synchronization + migration plan)
+
+- Synchronized the three P4 documents (`PROJECT_CONTEXT.md`, `docs/donation-workflow.md`,
+  `docs/p4-technical-design.md`) with the owner-approved P4.1 decisions:
+  - **D-11** (first-migration schema scope): exactly three tables — `donation_engagements`,
+    `donation_status_events`, `donation_followup_responses` — with constraints, indexes, RLS and
+    privilege protections; no `interest_id`; no `submitted_by`; both follow-up submission
+    timestamps retained; `additional_comments` optional (max 500); all P4 historical foreign keys
+    `ON DELETE RESTRICT`; one engagement per request; one active engagement per donor until
+    `reached_home_safely`.
+  - **D-12** (status-event actor): `actor_role` NOT NULL and donor-only; `actor_id` NOT NULL; no
+    Admin/Super-Admin/system actor in the initial schema; the later RPC verifies `actor_id` equals
+    the engagement donor.
+  - **D-13** (timestamp/follow-up): `updated_at` maintained by later RPCs (no trigger in P4.1);
+    follow-up submission rejected before `follow_up_due_at`; response insert and
+    `follow_up_submitted_at` written atomically with the same timestamp.
+- Corrected the P4 technical design: removed `interest_id` and `submitted_by`; corrected the
+  status-event actor model; corrected the accept-RPC effect (request `status` unchanged; the
+  request is excluded from the donor list via the engagement); restructured the implementation plan
+  into schema-first P4.1 plus later RPC/Realtime/notification/application phases.
+- A read-only P4.1 migration implementation plan was prepared (prerequisites, filename selection,
+  creation order, constraints, indexes, RLS/ACL guard, structural tests, verification, rollback,
+  later dependencies). No migration file was created.
+- No application code, SQL, migration, database, Supabase project or setting, dependency, or
+  feature-flag change was made. No Git stage/commit/push was performed.
+
+### Progress entry - 2026-11-12 (P4.1 lifecycle timestamp consistency correction)
+
+- Made the chronological lifecycle timestamp ordering a **mandatory** invariant (previously
+  recorded as optional in the P4.1 plan) in `docs/p4-technical-design.md` (§1.3 D-11, §4.2) and
+  `docs/donation-workflow.md` (§5.2):
+  `selected_at <= reached_location_at <= donation_started_at <= donation_ended_at <=
+  reached_home_safely_at`; each stage timestamp present exactly when its stage is reached and
+  consistent with the current `status`.
+- Clarified the separation of concerns: timestamp presence and non-decreasing order are enforced by
+  **row-level CHECK constraints**; the legal **transition order** and **actor authorization**
+  (`actor_id = engagement.donor_id`, `actor_role='donor'`) are enforced by later RPCs. The CHECKs
+  are written around the current status, so they never block a legitimate forward transition.
+- No new requirements were introduced; all previously approved P4.1 decisions are preserved.
+- No application code, SQL, migration, database, Supabase project or setting, dependency, or
+  feature-flag change was made. No Git stage/commit/push was performed.
+
+### Progress entry - 2026-11-15 (P4.1 offline parser validation and BMS-Development read-only preflight)
+
+- Validated the full P4.1 migration
+  `supabase/migrations/20261029000100_p4_donation_schema.sql` **offline** with `pglast` 7.22, using
+  the PostgreSQL 17 grammar (`libpg_query` 17.x). Result: **`PARSE OK; top-level statements = 20`**.
+  The full migration parsed successfully.
+- Limitation: PL/pgSQL bodies inside `DO` blocks were **not** compiled or executed by this offline
+  parser. Parser validation proves syntax only, not runtime, catalog, RLS or privilege behaviour.
+- No project dependencies or files were changed by the parser installation.
+- Ran a **read-only** preflight against `BMS-Development` (project ref `zbgqpqafvcxaoxxcuyxn`,
+  PostgreSQL version `17.11` / `170011`, current database/user `postgres` / `postgres`):
+  - All six prerequisite tables exist, are owned by `postgres`, have RLS enabled, and RLS is not
+    forced.
+  - Both required donor eligibility functions exist; their definitions were inspected, not executed.
+  - The required Supabase Auth schema, `auth.users`, `auth.uid()` and roles `anon`, `authenticated`,
+    `service_role` exist.
+  - All three target P4.1 tables and the nine expected index names are absent, so no naming
+    collisions were found.
+  - All preflight queries were read-only.
+- **P4.1 migration remains NOT APPLIED.** No SQL migration was executed, no database object was
+  created, and no Supabase modification was made. The Main Supabase project was not accessed.
+  Applying the migration requires separate explicit user authorization.
+- Documentation updated in this pass: `PROJECT_CONTEXT.md` and `docs/p4-technical-design.md` only.
+  No application code, SQL, migration, database, Supabase project or setting, dependency, or
+  feature-flag change was made. No Git stage/commit/push was performed.
+
+### Progress entry - 2026-11-15 (P4.1 manually applied in BMS-Development; status reconciliation)
+
+- The owner reported executing the exact P4.1 migration
+  `supabase/migrations/20261029000100_p4_donation_schema.sql` **manually in the BMS-Development**
+  (`zbgqpqafvcxaoxxcuyxn`) **SQL Editor**, returning `Success. No rows returned`.
+- Recorded from the owner's supplied evidence (not independently re-verified from this environment;
+  no Supabase access was performed here):
+  - The three target tables (`public.donation_engagements`, `public.donation_status_events`,
+    `public.donation_followup_responses`) exist, are owned by `postgres`, with RLS enabled and not
+    forced.
+  - All nine expected indexes exist.
+  - The `anon` / `authenticated` / `service_role` / PUBLIC permission verification returned
+    `Success. No rows returned`.
+- This **supersedes** the earlier "P4.1 NOT APPLIED" statements in this document and in
+  `docs/p4-technical-design.md`; those statements are retained as historical entries.
+- **Migration-history caveat:** a manual SQL-Editor apply does **not** prove that
+  `supabase_migrations.schema_migrations` contains `20261029000100`. **CLI migration history is
+  UNRECORDED / NOT VERIFIED.** No `migration repair`, `db push`, or SQL was executed in this
+  documentation pass. A future `db push` would fail-closed on the migration's own "P4.1 objects
+  already exist" preflight until history is reconciled under a separate approval.
+- **P4.1 structural tests (P4.7) are NOT complete.** Passing the apply's fail-closed ACL guard is not
+  a structural or behavioural test result.
+- Approved build order preserved: **P4.1 → P4.7 → P4.2**.
+- Documentation updated in this pass: `PROJECT_CONTEXT.md` and `docs/p4-technical-design.md` only. No
+  application code, SQL, migration, database, Supabase project or setting, dependency, or feature-flag
+  change was made. No Git stage/commit/push was performed. The Main project was not accessed.
+
+### Progress entry - 2026-11-16 (P4.2 applied; donation workflow integrated; Express Interest fix)
+
+- **P4.2 applied to BMS-Development** (`zbgqpqafvcxaoxxcuyxn`): the donation-workflow RPCs
+  (`supabase/migrations/20261030000100_p4_donation_rpcs.sql`) are deployed and were verified.
+- **Express Interest failure — root cause + fix.** The M7 function
+  `public.donor_express_interest(uuid)` raised SQLSTATE `42702` ("column reference \"request_id\" is
+  ambiguous") at first execution: the `ON CONFLICT(request_id,donor_id)` conflict target was ambiguous
+  between the table column `public.blood_request_interests.request_id` and the function's
+  `RETURNS TABLE` output parameter `request_id` (creation only syntax-checks PL/pgSQL bodies, so the
+  error appeared at runtime). Corrective migration
+  `supabase/migrations/20261116000100_fix_donor_express_interest_ambiguity.sql` replaces **only** that
+  function — conflict target becomes `ON CONFLICT ON CONSTRAINT
+  blood_request_interests_request_id_donor_id_key` (the identical unique constraint) — and preserves
+  signature, return columns, body logic, validation, locking, duplicate behaviour, error messages,
+  `SECURITY DEFINER`, empty `search_path`, `postgres` ownership and `REVOKE`/`GRANT`. **Applied and
+  verified in BMS-Development** (per owner confirmation).
+- **Donor workflow frontend integration implemented** in the Expo app: new service
+  `src/lib/donation-workflow.ts` (typed wrappers for the six donor RPCs, using the exact deployed
+  `p_*` argument names), plus screens `src/app/active-donation.tsx` and
+  `src/app/donation-followup.tsx`; `src/app/open-blood-requests.tsx` gained an **Accept** action
+  (confirm → `donor_accept_blood_request` → open the active-donation screen); `src/app/_layout.tsx`
+  registers both new routes. `tsc --noEmit` passes.
+- **Activation flags:** `BLOOD_REQUEST_SERVICE_ACTIVE = true` (`src/lib/blood-requests.ts`) and
+  `DONATION_WORKFLOW_SERVICE_ACTIVE = true` (`src/lib/donation-workflow.ts`), enabled for controlled
+  Development device testing with owner approval.
+- **Donor device workflow completed through `reached_home_safely`** (owner-reported):
+  accept → reached location → donation started → donation ended → reached home safely.
+- **Follow-up is pending, NOT submitted.** The two-day wellbeing questionnaire becomes available only
+  48 hours after `reached_home_safely`; it has not been submitted.
+- **Express Interest client diagnostics hardened** (`src/lib/blood-requests.ts`): the wrapper now
+  preserves the original Supabase code/message, distinguishes unmapped server errors
+  (`unknown-outcome` with preserved `serverCode`) from transport failures (`network`), and maps this
+  RPC's `55000` "Interest already recorded" message to the duplicate category (all other `55000`
+  remain stale). No secrets, IDs, or personal data are logged.
+- **Latest pending issue (next task):** after donation completion the **Beneficiary Dashboard still
+  shows the previous card status** instead of the expected message
+  "Blood donation complete! Please take care of the donor."
+- **Next task:** investigate this Beneficiary Dashboard status issue via a Cline read-only review, then
+  implement the smallest approved frontend fix. Do not redesign the workflow.
+- **Still not implemented / not runtime-tested:** Realtime live beneficiary status (P4.3/P4.4),
+  notifications (P4.5), admin donation screens, and the P4.7 behavioral pgTAP suites (the structural
+  suite remains an unrun draft). The Main Supabase project was not accessed.

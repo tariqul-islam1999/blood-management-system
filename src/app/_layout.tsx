@@ -26,6 +26,16 @@ export default function RootLayout() {
   options={{ title: 'Create Account' }}
 />
 
+        <Stack.Screen
+          name="active-donation"
+          options={{ title: 'Active Donation' }}
+        />
+
+        <Stack.Screen
+          name="donation-followup"
+          options={{ title: 'Donation Follow-up' }}
+        />
+
       </Stack>
     </ThemeProvider>
   );
