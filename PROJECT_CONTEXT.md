@@ -1,3 +1,12 @@
+> **Latest update — 2026-11-20 (documentation only).** Section 12 records the
+> owner-approved **Final Project Completion Work Plan (Phases 0–7, 20–30 November 2026)**.
+> Sections 1–11 are preserved unchanged as the project handoff, decision record and
+> history; the plan adds a time-boxed execution sequence and does not replace any
+> approved requirement. No source code, SQL, migration, configuration, Supabase project
+> or Git state was changed by this documentation update.
+
+---
+
 # 1. Project Overview
 
 ## App Name
@@ -1118,6 +1127,12 @@ workflow.
 
 # 9. Next Steps
 
+**Scheduling note (2026-11-20):** the owner-approved **Final Project Completion Work
+Plan** for 20–30 November 2026 is recorded in **Section 12**. It is the current
+time-boxed execution schedule. The priority lists and working notes below remain the
+approved feature-order and history they were written as; Section 12 does not override
+any approved requirement in them.
+
 Prioritized list:
 
 ## Current Development Priority — Complete the Core Application
@@ -1904,3 +1919,357 @@ Status snapshot: 2026-11-09 (deployment state updated 2026-11-10; P4.1 manually 
 - **Still not implemented / not runtime-tested:** Realtime live beneficiary status (P4.3/P4.4),
   notifications (P4.5), admin donation screens, and the P4.7 behavioral pgTAP suites (the structural
   suite remains an unrun draft). The Main Supabase project was not accessed.
+
+---
+
+# 12. Final Project Completion Work Plan (20–30 November 2026)
+
+**Status:** Owner-approved plan, recorded 2026-11-20. Documentation only.
+
+This section is the approved **completion roadmap** for finishing the Blood Management
+System (BMS) as an SDP-3 project. It adds a time-boxed sequence to the already-approved
+requirements; it does **not** replace or loosen anything in Sections 1–11, the Project
+Proposal, the SRS, `docs/donation-workflow.md`, or `docs/p4-technical-design.md`.
+
+## Target
+
+A **complete, visually polished, integrated and presentation-ready** SDP project by
+**30 November 2026**.
+
+## Governing assumptions
+
+- The approved Project Proposal and SRS (where available) remain the **source of truth**.
+  As already recorded in `docs/p4-technical-design.md`, the Proposal and SRS are **not
+  present in the repository**; where only owner confirmations exist, they are treated as
+  approved requirements, not as new design freedom.
+- `docs/donation-workflow.md` (Revision 5) and `docs/p4-technical-design.md` define the
+  approved donation lifecycle and its technical contract.
+- Existing approved workflows, RPCs, database schema, permissions and business logic are
+  **frozen** unless a genuine defect is found and the owner approves a specific change.
+- Any discrepancy found between an approved document and the implementation is recorded
+  as an **implementation gap** to close, not as a reason to redesign the requirement.
+- Work proceeds **one milestone at a time**, each ending with a short report covering:
+  what changed, files affected, what was verified, and what remains open.
+
+## Phase 0 — 20 November: Project protection and read-only audit
+
+**Nature of this phase: READ-ONLY. No code and no database changes.**
+
+Inspect and record the actual current state of:
+
+- Existing project documentation (`PROJECT_CONTEXT.md`, `docs/*`, `README.md`).
+- Every existing screen, navigation entry, shared component and styling approach.
+- All **four roles**: Admin, Super Admin, Donor, Beneficiary.
+- Supabase RPCs, migrations (applied vs. drafted), RLS policies, activation flags.
+- Git status, known bugs, and incomplete features.
+
+### Required output: Existing Functionality Checklist
+
+Produce one checklist of features, each assigned **exactly one** status:
+
+| Status | Meaning |
+|---|---|
+| **Completed** | Implemented, and verified in the environment where it is enabled. |
+| **Partially completed** | Some layers exist; the flow is not complete end to end. |
+| **Not implemented** | No working implementation exists. |
+| **Needs testing** | Implemented, but runtime/device verification is missing or stale. |
+| **Known bug** | Implemented but demonstrably incorrect or blocked by a recorded bug. |
+
+Rules for the checklist:
+
+- Status must reflect evidence actually inspected, not the existence of files.
+- A passing TypeScript check is **not** evidence that a feature works.
+- The checklist must state, per item, whether it was verified on a device, only
+  type-checked, or never executed.
+- Known items that must appear (at minimum): the Beneficiary Dashboard completion-status
+  bug (Section 8, item 13), the unconsumed 48-hour follow-up submission, the password
+  reset redirect limitation (Section 8, item 11), the unrun P4.7 behavioral pgTAP suites,
+  and Realtime live status (P4.3/P4.4) plus notifications (P4.5) as **not implemented**.
+
+## Phase 1 — 21 November: UI/UX design system and navigation
+
+Establish one consistent **Modern Minimal** design system used by every role.
+
+### Colour palette
+
+| Role in the palette | Colour |
+|---|---|
+| Primary (action / brand) | Red |
+| Surface | White |
+| Background / dividers | Light grey |
+| Body text | Dark text |
+| Success / completion | Green |
+
+### Standardize
+
+- Typography scale (headings, body, captions) with readable sizes and dynamic-type
+  safety.
+- Card styling: consistent radius, padding, border and elevation.
+- Buttons: one primary style, one secondary style, one destructive style; consistent
+  disabled, loading and pressed states.
+- Icons: one icon family and one size scale.
+- Spacing: a single spacing scale used across screens.
+- Subtle animations only (transitions, pressed feedback, skeleton/loading shimmer);
+  nothing that blocks interaction or hurts accessibility.
+- Safe areas, keyboard avoidance, small-screen layout, large-text tolerance and
+  accessible touch targets are part of the design system, not an afterthought.
+
+### Planned role-specific bottom navigation
+
+| Role | Tabs |
+|---|---|
+| Admin | Home, Users, Requests, Profile |
+| Super Admin | Home, Admins, Users, Settings |
+| Donor | Home, Requests, Donation, History, Profile |
+| Beneficiary | Home, Create Request, My Requests, Profile |
+
+Navigation rules:
+
+- Only include screens that are **implemented and authorized** for that role.
+- No dead ends: every tab must lead to a working screen or an honest empty/disabled
+  state.
+- No unauthorized routes: a tab must never open a screen the role cannot use, and role
+  checks occur when a protected route is opened directly.
+- Client-side tab filtering improves the experience but **never** replaces backend
+  authorization (RLS / RPC checks remain authoritative).
+- If a planned tab has no authorized screen yet, it is omitted for that phase and
+  recorded as pending rather than shipped as a placeholder.
+
+## Phase 2 — 22–24 November: UI redesign for all four roles
+
+Redesign the **UI layer only**. Preserve existing services, RPC calls, navigation
+contracts and business logic. Do not silently change a workflow while restyling a screen.
+
+### Admin
+
+Dashboard, statistics, donor verification, user management, blood request management,
+request details, and navigation.
+
+### Super Admin
+
+Dashboard, admin management, admin overview, user overview, authorized administrative
+controls, and navigation.
+
+### Donor
+
+Dashboard, open requests, request cards, accept action, active donation, progress,
+reached-home-safely step, follow-up, donation history, and profile.
+
+### Beneficiary
+
+Dashboard, create request, my requests, donor interest list, donor identity after
+acceptance, donation status tracking, completion message, request history, and profile.
+
+### Required for every redesigned screen
+
+- **Loading** state.
+- **Empty** state with honest wording.
+- **Error** state with a retry path where a retry is meaningful.
+- Preservation of the existing authorization behaviour and activation-flag semantics.
+
+### Execution discipline
+
+- Implement **one screen or role at a time**.
+- After each screen: run the TypeScript check, then do a targeted Expo Go test of that
+  screen.
+- Do not batch unverified redesigns; do not disable or bypass an activation gate to make
+  a screen "look complete".
+- Never display fabricated data, fake counts, or success messages that the backend did
+  not confirm.
+
+## Phase 3 — 25 November: Donor Donation History
+
+Before proposing any schema change, **inspect the existing database** and answer:
+
+1. What is the reliable source of **completed** donations?
+2. Which fields hold the donation **date** and **location**?
+3. What guarantees **uniqueness** (no duplicate history rows)?
+4. How is **donor-only** access enforced?
+
+Then:
+
+- **Reuse existing data** wherever possible. The approved lifecycle already records
+  `donation_ended` (which updates the donor's last donation date and starts the
+  four-month cooldown) and `reached_home_safely` (which completes the cycle). Prefer
+  reading the existing engagement/status records over adding new tables or columns.
+- If a database change is genuinely required, explain the exact gap, the proposed
+  migration, and its impact, then **obtain approval before applying anything**. Cline may
+  draft and review the SQL; the **user executes approved SQL manually** in the verified
+  **BMS-Development** SQL Editor.
+- Display: total completed donations, donation dates, locations, and relevant details.
+- Never count incomplete or cancelled donations.
+- Never fabricate data and never show duplicate records.
+- A donor may access **only their own** history; enforce this in backend authorization,
+  not in the UI alone.
+
+## Phase 4 — 26–27 November: Beneficiary workflow completion
+
+Audit and complete the beneficiary experience end to end:
+
+- Create Blood Request.
+- My Blood Requests.
+- Donor interest list.
+- Donor identity visibility **after acceptance only**.
+- Donation status tracking.
+- Completion message.
+- Request history.
+- Cancellation states.
+
+### Mandatory completion message
+
+When a donation reaches **`reached_home_safely`**, the beneficiary's associated request
+card must display this exact message:
+
+> **Blood donation complete! Please take care of the donor.**
+
+This is the currently open bug recorded in Section 8, item 13.
+
+Also verify:
+
+- Interest visibility (aggregate counts before acceptance; no donor identities).
+- Donor identity permissions (visible to the accepting donor's beneficiary only; never to
+  unrelated beneficiaries).
+- Status updates reaching the beneficiary correctly.
+- Cancellation and history behaviour (cancelled requests leave the active list, remain in
+  history, and are never presented as completed).
+
+## Phase 5 — 28 November: Donation workflow verification and bug fixes
+
+Verify the approved donor lifecycle end to end:
+
+1. Accept request
+2. Reached location
+3. Donation started
+4. Donation ended
+5. Reached home safely
+6. Health follow-up after 48 hours
+
+### Approved rules that must be preserved
+
+- The **four-month eligibility cooldown begins at `donation_ended`**.
+- The **one-active-donation restriction is released at `reached_home_safely`**.
+- The **follow-up timer starts from `reached_home_safely`** (elapsed 48 hours, compared
+  against the stored due timestamp).
+- **Accepted requests remain excluded** from the donor's open request list.
+- The **beneficiary sees donor identity only after donor acceptance**.
+- Only the donor may advance the lifecycle status; timestamps remain non-decreasing
+  (`selected_at ≤ reached_location_at ≤ donation_started_at ≤ donation_ended_at ≤
+  reached_home_safely_at`).
+- No GPS or location tracking of any kind.
+
+The follow-up step is time-gated. If it cannot be exercised within the window, record it
+as **not runtime-verified** rather than claimed as passing; do not shorten the gate, fake
+a submission, or edit stored timestamps to force availability.
+
+## Phase 6 — 29 November: Integration and testing
+
+Run **targeted** end-to-end and failure-state checks:
+
+- Registration and email confirmation.
+- Role-based login and dashboards.
+- Admin verification and management.
+- Super Admin authorized controls.
+- Donor workflow and donation history.
+- Beneficiary workflow and the completion message.
+- Role-specific navigation (including direct-route access attempts by the wrong role).
+- Authorization, loading, empty and error states.
+
+Rules:
+
+- **Avoid unnecessary broad test suites.** Prioritize meaningful, targeted checks on the
+  flows being demonstrated.
+- Include negative cases: signed-out user, wrong role, inactive/unapproved account, and
+  ownership violations.
+- Record which checks ran, on which platform, and which did not run.
+
+## Phase 7 — 30 November: Documentation and presentation readiness
+
+- Update `PROJECT_CONTEXT.md` and `README.md` **if needed**.
+- Prepare the final **feature checklist** and **known-issues list**.
+- Verify migration records and project documentation for consistency.
+- Run TypeScript checks and targeted Expo Go verification.
+- Prepare a clear presentation/demo sequence (ordered, with the exact role and screen for
+  each step, plus a fallback for anything that cannot be shown live).
+- **Commit and push approved final work to GitHub only after explicit user
+  authorization.**
+
+## Project-wide implementation and safety rules
+
+These rules apply during every phase above.
+
+1. Existing approved project documents and workflows remain the **source of truth**.
+   Treat discrepancies as implementation gaps, not as opportunities to redesign
+   approved requirements.
+2. Do not remove or break existing functionality while improving the UI.
+3. Do not change business logic, RPCs, database schema, workflows or permissions unless
+   an actual issue is identified and the user approves the proposed change.
+4. **Never access or modify the Main Supabase project.**
+5. Only use the **BMS-Development** Supabase project after verifying the exact project
+   target and receiving explicit user approval.
+6. Database changes must use **new corrective migrations** where necessary. **Never edit
+   an already-applied migration.**
+7. Cline may **draft and review SQL**, but the **user manually executes approved SQL** in
+   the Development Supabase SQL Editor.
+8. **Never bypass RLS or role authorization.**
+9. Preserve all existing modified and untracked files. **Never reset, discard, clean or
+   overwrite unrelated work.**
+10. **Do not stage, commit or push** anything without explicit user authorization.
+11. **Do not read, print or expose `.env` contents, credentials or keys.**
+12. Work **one milestone at a time**. Give the user a concise report of changes, files
+    affected, verification and remaining issues.
+13. If time becomes limited, **reduce visual polish rather than compromising core
+    functionality, security or approved requirements.**
+14. Keep **out-of-scope features excluded** unless the approved Proposal/SRS or the
+    Phase 0 audit demonstrates they are essential.
+
+### Explicitly out of scope
+
+- Chat / calling.
+- Payments.
+- Stock (inventory) management.
+- GPS tracking.
+- A full push-notification system.
+- A web Admin Panel.
+
+## Relationship to previously approved decisions
+
+- **P4 workflow:** unchanged. Phases 3–5 verify and surface the already-approved
+  lifecycle; they do not alter it. Realtime live status (P4.3/P4.4) and notifications
+  (P4.5) remain separate, individually-approved items and are **not** part of this
+  completion plan.
+- **Account Deletion:** remains **DEFERRED** (Section 6). It is not part of the
+  30 November target.
+- **Password reset:** remains **implemented but not runtime-tested** (Section 8, item 11).
+  Phase 6 includes it only as a targeted check; the redirect-host limitation must be
+  resolved through an approved transport change, never silently marked as fixed.
+- **Activation flags:** `BLOOD_REQUEST_SERVICE_ACTIVE` and
+  `DONATION_WORKFLOW_SERVICE_ACTIVE` are enabled only for controlled Development device
+  testing. A redesign must not change their values without separate approval.
+- **Migration history:** manually applied migrations remain **UNRECORDED / NOT VERIFIED**
+  in CLI history. Reconciling it is a separately approved action and is not a
+  documentation task.
+- **Super Admin scope:** the single-Super-Admin design, the M6 appointment/revocation
+  flow and `public.admin_access_history` remain unchanged (Section 6). Phase 2 restyles
+  the Super Admin UI only.
+
+## Phase checklist
+
+- [ ] Phase 0 (20 Nov) — read-only audit complete; Existing Functionality Checklist
+      produced with evidence per item.
+- [ ] Phase 1 (21 Nov) — design system and role-based bottom navigation agreed.
+- [ ] Phase 2 (22–24 Nov) — all four roles redesigned, screen by screen, TypeScript-clean
+      and device-checked.
+- [ ] Phase 3 (25 Nov) — donor donation history complete from existing data, or an
+      approved migration path agreed.
+- [ ] Phase 4 (26–27 Nov) — beneficiary workflow complete, including the exact completion
+      message at `reached_home_safely`.
+- [ ] Phase 5 (28 Nov) — full donor lifecycle verified with all approved rules preserved.
+- [ ] Phase 6 (29 Nov) — targeted integration and failure-state checks recorded.
+- [ ] Phase 7 (30 Nov) — documentation, known-issues list, demo sequence and (only with
+      explicit authorization) the final commit and push.
+
+## Change log
+
+| Date | Change |
+|---|---|
+| 2026-11-20 | Added Section 12 (owner-approved Final Project Completion Work Plan, Phases 0–7, 20–30 November 2026), a scheduling note in Section 9, and a top-of-file update banner. Sections 1–11 are preserved unchanged. No code, SQL, migration, configuration, Supabase or Git change. |
