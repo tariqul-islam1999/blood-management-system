@@ -11,7 +11,7 @@ import {
   beneficiaryCreateBloodRequest,
   validateCreateBloodRequest,
   verifyBloodRequestAccess,
-} from '../lib/blood-requests';
+} from '../../lib/blood-requests';
 
 export default function CreateBloodRequestScreen() {
   const router = useRouter();

@@ -11,7 +11,7 @@ import {
   beneficiaryCancelBloodRequest,
   beneficiaryListMyBloodRequests,
   verifyBloodRequestAccess,
-} from '../lib/blood-requests';
+} from '../../lib/blood-requests';
 
 export default function MyBloodRequestsScreen() {
   const [requests, setRequests] = useState<MyBloodRequest[]>([]);

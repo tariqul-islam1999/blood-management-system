@@ -181,9 +181,9 @@ export default function LoginScreen() {
       } else if (profile.role === 'beneficiary') {
         router.replace('/beneficiary-dashboard');
       } else if (profile.role === 'admin') {
-        router.replace('./admin-dashboard');
+        router.replace('/admin-dashboard');
       } else if (profile.role === 'super_admin') {
-        router.replace('./super-admin-dashboard');
+        router.replace('/super-admin-dashboard');
       }
 
     } catch (error) {

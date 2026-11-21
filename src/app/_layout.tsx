@@ -27,15 +27,21 @@ export default function RootLayout() {
 />
 
         <Stack.Screen
-          name="active-donation"
-          options={{ title: 'Active Donation' }}
+          name="(donor)"
+          options={{ headerShown: false }}
         />
-
         <Stack.Screen
-          name="donation-followup"
-          options={{ title: 'Donation Follow-up' }}
+          name="(beneficiary)"
+          options={{ headerShown: false }}
         />
-
+        <Stack.Screen
+          name="(admin)"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="(super-admin)"
+          options={{ headerShown: false }}
+        />
       </Stack>
     </ThemeProvider>
   );

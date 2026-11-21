@@ -5,11 +5,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../../lib/supabase';
 import {
   adminListPendingDonors, adminReviewDonor, isActiveAdministrator, PendingDonor,
   ReviewDecision, validateRejectionReason, VerificationError,
-} from '../lib/admin-donor-verification';
+} from '../../lib/admin-donor-verification';
 
 type ScreenState = 'loading' | 'ready' | 'inactive' | 'error' | 'unauthorized' | 'expired';
 const PAGE_SIZE = 20;
@@ -222,7 +222,7 @@ export default function AdminDashboard() {
             <Text style={styles.text}>Review pending donor registrations.</Text>
             {isSuperAdmin && (
               <Pressable accessibilityRole="link" style={styles.secondaryButton}
-                onPress={() => router.replace('./super-admin-dashboard')}>
+                onPress={() => router.replace('/super-admin-dashboard')}>
                 <Text style={styles.secondaryText}>Return to Super Admin Dashboard</Text>
               </Pressable>
             )}

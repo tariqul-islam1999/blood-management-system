@@ -5,12 +5,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../../lib/supabase';
 import {
   ADMIN_MANAGEMENT_ACTIVE, ADMIN_MANAGEMENT_MESSAGE, AdminCandidate, AdminListEntry,
   AdminManagementError, isAdminAccountId, superAdminAppointAdmin, superAdminGetAdminCandidate,
   superAdminListAdmins, superAdminRevokeAdmin, validateAdminManagementReason, verifySuperAdminAccess,
-} from '../lib/admin-management';
+} from '../../lib/admin-management';
 
 type ScreenState = 'loading' | 'ready' | 'inactive' | 'error' | 'unauthorized' | 'expired';
 type Confirmation = { action: 'appoint' | 'revoke'; user_id: string; full_name: string };
@@ -217,7 +217,7 @@ export default function SuperAdminDashboard() {
             {authorized && (
               <>
                 <Pressable accessibilityRole="link" style={styles.secondaryButton}
-                  onPress={() => router.push('./admin-dashboard')}>
+                  onPress={() => router.push('/admin-dashboard')}>
                   <Text style={styles.secondaryText}>Donor verification</Text>
                 </Pressable>
                 <View style={styles.card}>

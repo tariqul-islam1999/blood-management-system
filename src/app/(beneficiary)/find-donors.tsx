@@ -14,7 +14,7 @@ import {
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../../lib/supabase';
 
 type DonorResult = {
   donor_id: string;

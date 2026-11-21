@@ -17,7 +17,7 @@ import {
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Href, useRouter, useFocusEffect } from 'expo-router';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../../lib/supabase';
 import {
   DONOR_ELIGIBILITY_SERVICE_ACTIVE,
   DONOR_ELIGIBILITY_SERVICE_MESSAGE,
@@ -25,7 +25,7 @@ import {
   listMyDonations,
   type DonationRecord,
   type DonorEligibility,
-} from '../lib/donor-eligibility';
+} from '../../lib/donor-eligibility';
 
 type DonorProfile = {
   fullName: string;

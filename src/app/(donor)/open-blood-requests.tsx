@@ -6,7 +6,7 @@ import {
   DONATION_WORKFLOW_SERVICE_ACTIVE,
   DonationWorkflowError,
   donorAcceptBloodRequest,
-} from '../lib/donation-workflow';
+} from '../../lib/donation-workflow';
 
 import {
   BLOOD_REQUEST_SERVICE_ACTIVE,
@@ -15,7 +15,7 @@ import {
   donorExpressInterest,
   donorListOpenBloodRequests,
   verifyBloodRequestAccess,
-} from '../lib/blood-requests';
+} from '../../lib/blood-requests';
 
 export default function OpenBloodRequestsScreen() {
   const router = useRouter();

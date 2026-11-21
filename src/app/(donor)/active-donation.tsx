@@ -14,7 +14,7 @@ import {
   donorRecordReachedHomeSafely,
   donorStartDonation,
   verifyDonationWorkflowAccess,
-} from '../lib/donation-workflow';
+} from '../../lib/donation-workflow';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string => typeof value === 'string' && uuidPattern.test(value);

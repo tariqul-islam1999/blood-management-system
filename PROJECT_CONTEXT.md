@@ -2035,6 +2035,61 @@ Navigation rules:
 - If a planned tab has no authorized screen yet, it is omitted for that phase and
   recorded as pending rather than shipped as a placeholder.
 
+### Super Admin navigation — implemented state (21 November)
+
+The Super Admin route group `src/app/(super-admin)/` now exists with a single JS
+bottom tab, following the same pattern as `(admin)`, `(donor)` and
+`(beneficiary)`.
+
+- **Home** — the only tab. It renders `src/app/(super-admin)/super-admin-dashboard.tsx`
+  and resolves to `/super-admin-dashboard`.
+- **Admins** — *not yet a separate destination.* Admin list, candidate lookup,
+  appointment and revocation are cards inside the Home screen, not their own route.
+  They remain disabled while `ADMIN_MANAGEMENT_ACTIVE` is `false`.
+- **Users** — **pending.** No Users screen, service wrapper or RPC exists.
+- **Settings** — **pending.** No Settings screen exists.
+
+Pending tabs must not be introduced as placeholders before their screens exist. A
+tab may only be added once its screen is implemented and authorized for the role.
+
+### Phase 1 completion record — COMPLETE (21 November 2026)
+
+Phase 1 is complete: the Modern Minimal design tokens exist and all four
+role-specific route groups are in place.
+
+- **Design tokens implemented** — `src/constants/design-tokens.ts` (additive; it
+  does not replace `src/constants/theme.ts`).
+- **Donor navigation implemented and tested** — `src/app/(donor)/`.
+- **Beneficiary navigation implemented and tested** — `src/app/(beneficiary)/`.
+- **Admin navigation implemented and tested** — `src/app/(admin)/`.
+- **Super Admin navigation implemented and tested** — `src/app/(super-admin)/`.
+- **All four role-specific route groups are in place**, registered alongside the
+  existing root routes in `src/app/_layout.tsx`.
+- **Navigation and existing authentication/authorization checks preserved** — the
+  move into route groups changed file locations and import paths only. Role
+  validation, account-status checks, RPC wrappers and feature flags are unchanged.
+- **TypeScript verification:** PASS (exit code 0).
+- **`git diff --check`:** PASS.
+- **Expo Go runtime navigation test sequence:** user confirmed all tests PASS.
+  Existing Donor runtime tests were already completed successfully.
+- **No Supabase schema, database, credentials, or feature flags changed.**
+- **No dependencies installed.**
+- **No Main or Development Supabase changes.**
+
+#### Phase 1 known deferred item — Super Admin Logout
+
+- The Super Admin dashboard currently has **no Logout button**. The user confirmed
+  all other tested navigation sequences work correctly.
+- The Logout UI is **deferred to the Phase 2 Super Admin UI redesign**. It is not
+  implemented in Phase 1 and must not be added outside that scope.
+- The approved shared top menu for Phase 2 includes **Profile, Edit Profile, Change
+  Profile Photo and Logout**, subject to existing route availability and proper
+  Supabase Auth sign-out behaviour.
+
+#### Phase 2 status — NOT STARTED
+
+Phase 2 is planned for 22–24 November 2026. No Phase 2 implementation has begun.
+
 ## Phase 2 — 22–24 November: UI redesign for all four roles
 
 Redesign the **UI layer only**. Preserve existing services, RPC calls, navigation
@@ -2256,7 +2311,9 @@ These rules apply during every phase above.
 
 - [ ] Phase 0 (20 Nov) — read-only audit complete; Existing Functionality Checklist
       produced with evidence per item.
-- [ ] Phase 1 (21 Nov) — design system and role-based bottom navigation agreed.
+- [x] Phase 1 (21 Nov) — design system and role-based bottom navigation agreed,
+      implemented, TypeScript-clean and confirmed PASS in the user's Expo Go
+      navigation test sequence.
 - [ ] Phase 2 (22–24 Nov) — all four roles redesigned, screen by screen, TypeScript-clean
       and device-checked.
 - [ ] Phase 3 (25 Nov) — donor donation history complete from existing data, or an
@@ -2273,3 +2330,4 @@ These rules apply during every phase above.
 | Date | Change |
 |---|---|
 | 2026-11-20 | Added Section 12 (owner-approved Final Project Completion Work Plan, Phases 0–7, 20–30 November 2026), a scheduling note in Section 9, and a top-of-file update banner. Sections 1–11 are preserved unchanged. No code, SQL, migration, configuration, Supabase or Git change. |
+| 2026-11-21 | Recorded Phase 1 completion (design tokens, all four role route groups, navigation preserved, TypeScript PASS, `git diff --check` PASS, user-confirmed Expo Go navigation tests), the deferred Super Admin Logout item and the Phase 2 "not started" status. Marked the Phase 1 checklist item complete. No Supabase, dependency or feature-flag change. |
