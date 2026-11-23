@@ -5,16 +5,42 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+
 import { supabase } from '../../lib/supabase';
 import {
   ADMIN_MANAGEMENT_ACTIVE, ADMIN_MANAGEMENT_MESSAGE, AdminCandidate, AdminListEntry,
   AdminManagementError, isAdminAccountId, superAdminAppointAdmin, superAdminGetAdminCandidate,
   superAdminListAdmins, superAdminRevokeAdmin, validateAdminManagementReason, verifySuperAdminAccess,
 } from '../../lib/admin-management';
+import { AppButton, AppCard, EmptyState, StatusBadge } from '../../components/ui';
+import {
+  DesignColors, FontWeight, Layout, Radii, Space, TypeScale,
+} from '../../constants/design-tokens';
+
+/**
+ * Super Admin dashboard: donor-verification access and dedicated admin management.
+ *
+ * PRESENTATION ONLY. Every service call, feature gate, pagination rule,
+ * confirmation step and authorization check below is unchanged from the
+ * previous implementation:
+ * - `verifySuperAdminAccess()` still gates the screen (active super admin only).
+ * - `ADMIN_MANAGEMENT_ACTIVE` remains false, so lookup/appoint/revoke stay
+ *   disabled and no RPC is ever called while it is off.
+ * - No donor or other-user information is displayed; the only new read is the
+ *   caller's own `profiles.full_name` for the header.
+ */
 
 type ScreenState = 'loading' | 'ready' | 'inactive' | 'error' | 'unauthorized' | 'expired';
 type Confirmation = { action: 'appoint' | 'revoke'; user_id: string; full_name: string };
 const PAGE_SIZE = 20;
+
+/** First letters of up to two words, upper-cased. */
+function toInitials(value: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  if (words.length === 0) return '?';
+  return words.map((word) => word[0]?.toUpperCase() ?? '').join('');
+}
 
 export default function SuperAdminDashboard() {
   const router = useRouter();
@@ -30,6 +56,12 @@ export default function SuperAdminDashboard() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [formError, setFormError] = useState('');
   const [working, setWorking] = useState(false);
+  // Own profile name for the header. Read from `profiles` (own row only).
+  const [displayName, setDisplayName] = useState('');
+  // Logout dialog state (separate from the admin-management confirmation).
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const focused = useRef(false);
   const generation = useRef(0);
   const busy = useRef(false);
@@ -60,6 +92,19 @@ export default function SuperAdminDashboard() {
       if (!current()) return;
       caller.current = userId;
       setAuthorized(true);
+      // Header name only: the caller's own profiles row (RLS "Users can view
+      // own profile"). A failure here must never block admin management, so it
+      // is best-effort and leaves the header without a name.
+      try {
+        const { data: ownProfile } = await supabase
+          .from('profiles').select('full_name').eq('id', userId).maybeSingle();
+        if (current() && ownProfile && typeof ownProfile.full_name === 'string') {
+          setDisplayName(ownProfile.full_name);
+        }
+      } catch {
+        // Non-fatal: the dashboard still works without the display name.
+      }
+      if (!current()) return;
       // No fallback reads from Auth, audit tables or an unprotected user directory.
       const rows = await superAdminListAdmins(PAGE_SIZE, requestedPage * PAGE_SIZE);
       if (!current()) return;
@@ -198,188 +243,598 @@ export default function SuperAdminDashboard() {
     setFormError('');
   };
 
+  const openLogout = () => {
+    if (isLoggingOut || busy.current) return;
+    setLogoutError('');
+    setConfirmingLogout(true);
+  };
+
+  const closeLogout = () => {
+    if (isLoggingOut) return;
+    setConfirmingLogout(false);
+    setLogoutError('');
+  };
+
+  const confirmLogout = async () => {
+    // `isLoggingOut` blocks a second tap before React re-renders the button.
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    setLogoutError('');
+    try {
+      // Existing Supabase sign-out path, identical to the Admin/donor screens.
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setConfirmingLogout(false);
+      router.replace('/login');
+    } catch (error) {
+      // Stay signed in and keep the dialog open so the action can be retried.
+      setLogoutError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Sign out failed. Check your connection and try again.',
+      );
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
-      <Stack.Screen options={{ title: 'Super Admin Dashboard' }} />
+      <Stack.Screen options={{ title: 'Super Admin' }} />
       <FlatList
         data={authorized && state === 'ready' ? admins : []}
         keyExtractor={(item) => item.user_id}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <View style={styles.section}>
-            <Text style={styles.title} accessibilityRole="header">Super Admin Dashboard</Text>
-            <Text style={styles.text}>Manage dedicated admin access and review donors.</Text>
-            {!ADMIN_MANAGEMENT_ACTIVE && <View style={styles.notice} accessibilityLiveRegion="polite">
-              <Text style={styles.noticeTitle}>{ADMIN_MANAGEMENT_MESSAGE}</Text>
-              <Text style={styles.text}>Admin lookup, listing, appointment and revocation are disabled until the backend is separately deployed and verified. No admin changes can be submitted.</Text>
-            </View>}
-            {authorized && (
-              <>
-                <Pressable accessibilityRole="link" style={styles.secondaryButton}
-                  onPress={() => router.push('/admin-dashboard')}>
-                  <Text style={styles.secondaryText}>Donor verification</Text>
-                </Pressable>
-                <View style={styles.card}>
-                  <Text style={styles.heading} accessibilityRole="header">Appoint Admin</Text>
-                  <Text style={styles.text}>Use the UUID of a dedicated, email-verified account registered as a beneficiary. Confirm ownership and dedicated use before appointment. Donor and super admin accounts cannot be appointed.</Text>
-                  <Text style={styles.label}>Account UUID</Text>
-                  <TextInput accessibilityLabel="Dedicated account UUID" style={styles.input}
-                    placeholder="Enter account UUID" placeholderTextColor="#6B7280" autoCapitalize="none"
-                    autoCorrect={false} value={targetId} editable={!working}
-                    onChangeText={(value) => { setTargetId(value); setCandidate(null); setFormError(''); }} />
-                  {!!targetId && !validId && <Text style={styles.error}>Enter a valid account UUID.</Text>}
-                  <Pressable accessibilityRole="button" disabled={!available || !validId}
-                    accessibilityState={{ disabled: !available || !validId }}
-                    style={[styles.secondaryButton, (!available || !validId) && styles.disabled]}
-                    onPress={() => void lookupCandidate()}>
-                    <Text style={styles.secondaryText}>Look up account</Text>
-                  </Pressable>
-                  {candidate && (
-                    <View style={styles.section} accessibilityLiveRegion="polite">
-                      <Text style={styles.heading}>{candidate.full_name}</Text>
-                      <Text selectable style={styles.text}>{candidate.user_id}</Text>
-                      <Text style={styles.text}>Role: {candidate.current_role} · Status: {candidate.account_status}</Text>
-                      <Text style={styles.text}>{candidate.eligible
-                        ? 'Eligible for appointment. The server will recheck before making changes.'
-                        : 'This account is not eligible for appointment. Use a verified dedicated account; unrelated suspensions and deactivations cannot be reversed here.'}</Text>
-                    </View>
-                  )}
-                  <Text style={styles.label}>Appointment reason (required)</Text>
-                  <Text style={styles.text}>Use 10–500 characters. Keep the reason brief; avoid medical details, contact information and secrets.</Text>
-                  <TextInput accessibilityLabel="Appointment reason, required, 10 to 500 characters" multiline
-                    textAlignVertical="top" style={[styles.input, styles.reason]} placeholder="Reason for granting admin access"
-                    placeholderTextColor="#6B7280" value={reason} editable={!working && !confirmation}
-                    onChangeText={setReason} />
-                  <Text style={styles.text}>{Array.from(reason.trim()).length}/500 characters</Text>
-                  {!!reason && reasonError && <Text accessibilityLiveRegion="polite" style={styles.error}>{reasonError}</Text>}
-                  <Pressable accessibilityRole="button" disabled={!canAppoint}
-                    accessibilityState={{ disabled: !canAppoint }} style={[styles.button, !canAppoint && styles.disabled]}
-                    onPress={() => { if (canAppoint && candidate) setConfirmation({ action: 'appoint', ...candidate }); }}>
-                    <Text style={styles.buttonText}>Appoint Admin</Text>
-                  </Pressable>
-                  {!!formError && <Text accessibilityLiveRegion="polite" style={styles.error}>{formError}</Text>}
-                  {working && <ActivityIndicator color="#991B1B" accessibilityLabel="Processing admin request" />}
+          <View style={styles.header}>
+            <View style={styles.headerRow}>
+              <View style={styles.avatar} accessible={false}>
+                <Text style={styles.avatarText}>{toInitials(displayName)}</Text>
+              </View>
+              <View style={styles.headerText}>
+                <Text style={styles.eyebrow}>Signed in as</Text>
+                <Text style={styles.title} accessibilityRole="header" numberOfLines={2}>
+                  {displayName || 'Super Administrator'}
+                </Text>
+                <View style={styles.badgeRow}>
+                  <StatusBadge status="active" label="Super administrator" />
                 </View>
-              </>
+              </View>
+            </View>
+
+            <View style={styles.actions}>
+              <AppButton
+                label="Donor verification"
+                variant="outline"
+                accessibilityLabel="Open donor verification"
+                style={styles.actionButton}
+                onPress={() => router.push('/admin-dashboard')}
+              />
+              <AppButton
+                label="Log out"
+                variant="outline"
+                accessibilityLabel="Log out of the Super Admin dashboard"
+                style={styles.actionButton}
+                onPress={openLogout}
+              />
+            </View>
+
+            {!ADMIN_MANAGEMENT_ACTIVE && (
+              <View style={styles.notice} accessibilityLiveRegion="polite">
+                <View style={styles.noticeHeading}>
+                  <SymbolView
+                    name={{ ios: 'exclamationmark.triangle', android: 'error', web: 'error' }}
+                    size={20}
+                    tintColor={DesignColors.warning}
+                  />
+                  <Text style={styles.noticeTitle}>{ADMIN_MANAGEMENT_MESSAGE}</Text>
+                </View>
+                <Text style={styles.noticeText}>
+                  Admin lookup, listing, appointment and revocation are disabled until the backend
+                  is separately deployed and verified. No admin changes can be submitted.
+                </Text>
+              </View>
             )}
-            <Text style={styles.heading} accessibilityRole="header">Admin List</Text>
-            {state === 'ready' && admins.length > 0 && <Text style={styles.text}>Page {page + 1} · {admins.length} admins on this page</Text>}
+
+            {authorized && (
+              <AppCard>
+                <View style={styles.cardHeadingRow}>
+                  <SymbolView
+                    name={{ ios: 'person.badge.plus', android: 'person', web: 'person' }}
+                    size={20}
+                    tintColor={DesignColors.primary}
+                  />
+                  <Text style={styles.heading} accessibilityRole="header">Appoint Admin</Text>
+                </View>
+                <Text style={styles.text}>
+                  Use the UUID of a dedicated, email-verified account registered as a beneficiary.
+                  Confirm ownership and dedicated use before appointment. Donor and super admin
+                  accounts cannot be appointed.
+                </Text>
+                <Text style={styles.label}>Account UUID</Text>
+                <TextInput accessibilityLabel="Dedicated account UUID" style={styles.input}
+                  placeholder="Enter account UUID" placeholderTextColor={DesignColors.textMuted}
+                  autoCapitalize="none" autoCorrect={false} value={targetId} editable={!working}
+                  onChangeText={(value) => { setTargetId(value); setCandidate(null); setFormError(''); }} />
+                {!!targetId && !validId && (
+                  <Text style={styles.error} accessibilityLiveRegion="polite">
+                    Enter a valid account UUID.
+                  </Text>
+                )}
+                <AppButton
+                  label="Look up account"
+                  variant="secondary"
+                  disabled={!available || !validId}
+                  onPress={() => void lookupCandidate()}
+                />
+                {candidate && (
+                  <View style={styles.candidateBox} accessibilityLiveRegion="polite">
+                    <Text style={styles.candidateName}>{candidate.full_name}</Text>
+                    <Text selectable style={styles.monoText}>{candidate.user_id}</Text>
+                    <View style={styles.badgeRow}>
+                      <StatusBadge
+                        status={candidate.account_status}
+                        label={`Role: ${candidate.current_role}`}
+                      />
+                    </View>
+                    <Text style={styles.text}>{candidate.eligible
+                      ? 'Eligible for appointment. The server will recheck before making changes.'
+                      : 'This account is not eligible for appointment. Use a verified dedicated account; unrelated suspensions and deactivations cannot be reversed here.'}</Text>
+                  </View>
+                )}
+                <Text style={styles.label}>Appointment reason (required)</Text>
+                <Text style={styles.helperText}>
+                  Use 10-500 characters. Keep the reason brief; avoid medical details, contact
+                  information and secrets.
+                </Text>
+                <TextInput accessibilityLabel="Appointment reason, required, 10 to 500 characters" multiline
+                  textAlignVertical="top" style={styles.reasonInput} placeholder="Reason for granting admin access"
+                  placeholderTextColor={DesignColors.textMuted} value={reason} editable={!working && !confirmation}
+                  onChangeText={setReason} />
+                <Text style={styles.helperText}>{Array.from(reason.trim()).length}/500 characters</Text>
+                {!!reason && reasonError && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{reasonError}</Text>
+                )}
+                <AppButton
+                  label="Appoint Admin"
+                  variant="primary"
+                  disabled={!canAppoint}
+                  onPress={() => { if (canAppoint && candidate) setConfirmation({ action: 'appoint', ...candidate }); }}
+                />
+                {!!formError && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{formError}</Text>
+                )}
+                {working && (
+                  <ActivityIndicator color={DesignColors.primary} accessibilityLabel="Processing admin request" />
+                )}
+              </AppCard>
+            )}
+
+            <View style={styles.sectionHeadingRow}>
+              <Text style={styles.sectionTitle} accessibilityRole="header">Admin accounts</Text>
+              {state === 'ready' && admins.length > 0 && (
+                <Text style={styles.pageMeta}>Page {page + 1} · {admins.length} on this page</Text>
+              )}
+            </View>
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.card} accessibilityLiveRegion="polite">
-            {state === 'loading' ? <>
-              <ActivityIndicator color="#991B1B" accessibilityLabel="Checking super admin access" />
-              <Text style={styles.text}>Checking access and loading admins…</Text>
-            </> : <>
-              <Text style={styles.heading}>{state === 'ready' ? 'No admins on this page' :
-                state === 'unauthorized' ? 'Access denied' : state === 'expired' ? 'Login required' :
-                state === 'inactive' ? 'Admin list unavailable' : 'Unable to load admins'}</Text>
-              <Text style={styles.text}>{state === 'ready' ? 'No admin accounts were returned for this page.' : message}</Text>
-              {state === 'inactive' && <Text style={styles.text}>The list has not been loaded. This does not mean there are no admins.</Text>}
-              <Pressable accessibilityRole="button" style={[styles.secondaryButton, working && styles.disabled]}
-                disabled={working} accessibilityState={{ disabled: working }}
-                onPress={() => state === 'expired' || state === 'unauthorized' ? router.replace('/login') : void load()}>
-                <Text style={styles.secondaryText}>{state === 'expired' || state === 'unauthorized' ? 'Go to login' : 'Retry / refresh'}</Text>
-              </Pressable>
-            </>}
-          </View>
+          state === 'loading' ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator color={DesignColors.primary} accessibilityLabel="Checking super admin access" />
+              <Text style={styles.loadingText}>Checking access and loading admins...</Text>
+            </View>
+          ) : (
+            <AppCard>
+              <EmptyState
+                icon={
+                  state === 'ready'
+                    ? { ios: 'person.2', android: 'groups', web: 'groups' }
+                    : { ios: 'exclamationmark.triangle', android: 'error', web: 'error' }
+                }
+                title={
+                  state === 'ready' ? 'No admins on this page' :
+                  state === 'unauthorized' ? 'Access denied' :
+                  state === 'expired' ? 'Login required' :
+                  state === 'inactive' ? 'Admin list unavailable' : 'Unable to load admins'
+                }
+                description={
+                  state === 'ready'
+                    ? 'No admin accounts were returned for this page.'
+                    : message
+                }
+                action={
+                  <View style={styles.emptyActions}>
+                    {state === 'inactive' && (
+                      <Text style={styles.noticeText}>
+                        The list has not been loaded. This does not mean there are no admins.
+                      </Text>
+                    )}
+                    <AppButton
+                      label={state === 'expired' || state === 'unauthorized' ? 'Go to login' : 'Retry / refresh'}
+                      variant="primary"
+                      disabled={working}
+                      onPress={() => state === 'expired' || state === 'unauthorized'
+                        ? void router.replace('/login') : void load()}
+                    />
+                  </View>
+                }
+              />
+            </AppCard>
+          )
         }
         renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.heading}>{item.full_name}</Text>
-            <Text selectable style={styles.text}>Account ID: {item.user_id}</Text>
-            <Text style={styles.text}>Status: {item.account_status}</Text>
-            <Text style={styles.text}>{item.last_action && item.last_changed_at
-              ? `Last action: ${item.last_action} · ${new Date(item.last_changed_at).toLocaleString()}`
-              : 'No management history recorded for this account.'}</Text>
-            <Pressable accessibilityRole="button" disabled={!available || item.account_status !== 'active'}
-              accessibilityState={{ disabled: !available || item.account_status !== 'active' }}
-              style={[styles.button, (!available || item.account_status !== 'active') && styles.disabled]}
+          <AppCard style={styles.adminCard}>
+            <View style={styles.donorHeaderRow}>
+              <View style={styles.smallAvatar} accessible={false}>
+                <Text style={styles.smallAvatarText}>{toInitials(item.full_name)}</Text>
+              </View>
+              <View style={styles.adminHeaderText}>
+                <Text style={styles.adminName} numberOfLines={2}>{item.full_name}</Text>
+                <Text style={styles.monoText} numberOfLines={1}>ID: {item.user_id}</Text>
+              </View>
+            </View>
+
+            <View style={styles.badgeRow}>
+              <StatusBadge status={item.account_status} />
+            </View>
+
+            <Text style={styles.helperText}>
+              {item.last_action && item.last_changed_at
+                ? `Last action: ${item.last_action} · ${new Date(item.last_changed_at).toLocaleString()}`
+                : 'No management history recorded for this account.'}
+            </Text>
+
+            <AppButton
+              label="Revoke Admin Access"
+              variant="destructive"
+              disabled={!available || item.account_status !== 'active'}
+              accessibilityLabel={`Revoke admin access for ${item.full_name}`}
               onPress={() => {
                 if (!available || item.account_status !== 'active') return;
                 setReason(''); setFormError(''); setConfirmation({ action: 'revoke', ...item });
-              }}>
-              <Text style={styles.buttonText}>Revoke Admin Access</Text>
-            </Pressable>
-          </View>
+              }}
+            />
+          </AppCard>
         )}
         ListFooterComponent={state === 'ready' ? (
-          <View style={styles.actions}>
-            <Pressable accessibilityRole="button" style={[styles.secondaryButton, working && styles.disabled]}
-              disabled={working} accessibilityState={{ disabled: working }} onPress={() => void load()}>
-              <Text style={styles.secondaryText}>Refresh admins</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" disabled={working || page === 0}
-              accessibilityState={{ disabled: working || page === 0 }}
-              style={[styles.secondaryButton, (working || page === 0) && styles.disabled]} onPress={() => void load(page - 1)}>
-              <Text style={styles.secondaryText}>Previous</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" disabled={working || !hasNext}
-              accessibilityState={{ disabled: working || !hasNext }}
-              style={[styles.secondaryButton, (working || !hasNext) && styles.disabled]} onPress={() => void load(page + 1)}>
-              <Text style={styles.secondaryText}>Next</Text>
-            </Pressable>
+          <View style={styles.pagination}>
+            <View style={styles.paginationRow}>
+              <AppButton
+                label="Previous"
+                variant="outline"
+                disabled={working || page === 0}
+                style={styles.paginationButton}
+                onPress={() => void load(page - 1)}
+              />
+              <AppButton
+                label="Next"
+                variant="outline"
+                disabled={working || !hasNext}
+                style={styles.paginationButton}
+                onPress={() => void load(page + 1)}
+              />
+            </View>
+            <AppButton
+              label="Refresh admins"
+              variant="secondary"
+              disabled={working}
+              onPress={() => void load()}
+            />
           </View>
         ) : undefined}
       />
       <Modal visible={confirmation !== null && authorized} transparent animationType="fade" onRequestClose={closeConfirmation}>
         <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <SafeAreaView style={styles.dialog} accessibilityViewIsModal>
-            <ScrollView contentContainerStyle={styles.section} keyboardShouldPersistTaps="handled">
-              <Text style={styles.heading} accessibilityRole="header">
+            <ScrollView contentContainerStyle={styles.dialogContent} keyboardShouldPersistTaps="handled">
+              <Text style={styles.dialogTitle} accessibilityRole="header">
                 {confirmation?.action === 'appoint' ? 'Confirm admin appointment' : 'Confirm admin revocation'}
               </Text>
-              <Text style={styles.text}>{confirmation?.full_name}</Text>
-              <Text selectable style={styles.text}>{confirmation?.user_id}</Text>
+              <Text style={styles.dialogSubject}>{confirmation?.full_name}</Text>
+              <Text selectable style={styles.monoText}>{confirmation?.user_id}</Text>
               <Text style={styles.text}>{confirmation?.action === 'appoint'
                 ? 'This dedicated account will gain permission to verify donors. It will not be allowed to manage admins.'
                 : 'This admin account will be deactivated and lose donor review access. Account records and audit history will be preserved. This does not delete the account or cancel reviews already in progress.'}</Text>
-              <Text style={styles.label}>Reason (required, 10–500 characters)</Text>
+              <Text style={styles.label}>Reason (required, 10-500 characters)</Text>
               <TextInput accessibilityLabel="Admin access change reason, required" multiline textAlignVertical="top"
-                style={[styles.input, styles.reason]} value={reason} onChangeText={setReason} editable={!working} />
-              <Text style={styles.text}>{Array.from(reason.trim()).length}/500 characters</Text>
+                style={styles.reasonInput} value={reason} onChangeText={setReason} editable={!working} />
+              <Text style={styles.helperText}>{Array.from(reason.trim()).length}/500 characters</Text>
               {reasonError && <Text style={styles.error} accessibilityLiveRegion="polite">{reasonError}</Text>}
               {!ADMIN_MANAGEMENT_ACTIVE && <Text style={styles.error}>{ADMIN_MANAGEMENT_MESSAGE}</Text>}
-              <Pressable accessibilityRole="button" disabled={!available || !!reasonError}
-                accessibilityState={{ disabled: !available || !!reasonError }}
-                style={[styles.button, (!available || !!reasonError) && styles.disabled]} onPress={() => void submitChange()}>
-                <Text style={styles.buttonText}>{working ? 'Submitting…' :
-                  confirmation?.action === 'appoint' ? 'Confirm appointment' : 'Confirm revocation'}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" disabled={working} accessibilityState={{ disabled: working }}
-                style={[styles.secondaryButton, working && styles.disabled]} onPress={closeConfirmation}>
-                <Text style={styles.secondaryText}>Cancel</Text>
-              </Pressable>
+              <AppButton
+                label={working ? 'Submitting...' :
+                  confirmation?.action === 'appoint' ? 'Confirm appointment' : 'Confirm revocation'}
+                variant={confirmation?.action === 'appoint' ? 'primary' : 'destructive'}
+                loading={working}
+                disabled={!available || !!reasonError}
+                onPress={() => void submitChange()}
+              />
+              <AppButton
+                label="Cancel"
+                variant="outline"
+                disabled={working}
+                onPress={closeConfirmation}
+              />
             </ScrollView>
           </SafeAreaView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Logout confirmation. A Modal (not Alert) because Alert.alert is a no-op
+          in react-native-web, so confirmation must work on web as well. */}
+      <Modal
+        visible={confirmingLogout}
+        transparent
+        animationType="fade"
+        onRequestClose={closeLogout}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.dialog} accessibilityViewIsModal>
+            <Text style={styles.dialogTitle} accessibilityRole="header">Log out?</Text>
+            <Text style={styles.text}>
+              You will be returned to the login screen and will need to sign in again to manage
+              administrator access.
+            </Text>
+            {logoutError !== '' && (
+              <Text style={styles.error} accessibilityLiveRegion="polite">{logoutError}</Text>
+            )}
+            <View style={styles.dialogActions}>
+              <AppButton
+                label="Log out"
+                variant="primary"
+                loading={isLoggingOut}
+                onPress={() => void confirmLogout()}
+              />
+              <AppButton
+                label="Cancel"
+                variant="outline"
+                disabled={isLoggingOut}
+                onPress={closeLogout}
+              />
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#FFF5F5' },
-  content: { flexGrow: 1, width: '100%', maxWidth: 960, alignSelf: 'center', padding: 20, gap: 16 },
-  section: { gap: 14 },
-  title: { fontSize: 28, fontWeight: '700', color: '#991B1B' },
-  heading: { fontSize: 19, fontWeight: '600', color: '#111827' },
-  label: { fontSize: 16, fontWeight: '600', color: '#111827' },
-  text: { fontSize: 16, lineHeight: 24, color: '#374151', flexShrink: 1 },
-  notice: { padding: 16, gap: 8, borderWidth: 1, borderColor: '#D97706', borderRadius: 12, backgroundColor: '#FFFBEB' },
-  noticeTitle: { fontSize: 17, fontWeight: '700', color: '#78350F' },
-  card: { padding: 20, gap: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  button: { minHeight: 48, padding: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 10, backgroundColor: '#991B1B' },
-  buttonText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF', textAlign: 'center' },
-  secondaryButton: { minHeight: 48, padding: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: '#991B1B' },
-  secondaryText: { fontSize: 16, fontWeight: '600', color: '#991B1B', textAlign: 'center' },
-  disabled: { opacity: 0.5 },
-  input: { minHeight: 48, borderWidth: 1, borderColor: '#6B7280', padding: 12, borderRadius: 8, fontSize: 16, color: '#111827' },
-  reason: { minHeight: 110 },
-  error: { fontSize: 15, color: '#991B1B' },
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 20 },
-  dialog: { width: '100%', maxWidth: 600, maxHeight: '100%', padding: 20, borderRadius: 16, backgroundColor: '#FFFFFF' },
+  screen: { flex: 1, backgroundColor: DesignColors.background },
+  content: {
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Space.lg,
+    // Base gutter (Space.lg) plus a deliberate 16pt lift so the header does not
+    // sit flush under the status bar area. The SafeAreaView deliberately omits
+    // the 'top' edge, so this value is the only top spacing applied here.
+    paddingTop: Space.xxxl,
+    paddingBottom: Space.xxxl,
+    gap: Space.md,
+  },
+
+  header: { gap: Space.md, marginBottom: Space.xs },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md },
+  headerText: { flex: 1, gap: Space.xxs },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+  },
+  avatarText: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.primaryDeep,
+  },
+  eyebrow: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.medium,
+    color: DesignColors.textMuted,
+    letterSpacing: 0.6,
+  },
+  title: {
+    fontSize: TypeScale.heading,
+    fontWeight: FontWeight.bold,
+    lineHeight: 30,
+    color: DesignColors.text,
+  },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm, marginTop: Space.xxs },
+
+  sectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    marginTop: Space.xs,
+  },
+  sectionTitle: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.text,
+  },
+  pageMeta: {
+    fontSize: TypeScale.caption,
+    color: DesignColors.textMuted,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+
+  notice: {
+    gap: Space.sm,
+    padding: Space.md,
+    borderRadius: Radii.lg,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.warningBorder,
+    backgroundColor: DesignColors.warningSurface,
+  },
+  noticeHeading: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
+  noticeTitle: {
+    flex: 1,
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.warning,
+  },
+  noticeText: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.warning,
+  },
+
+  cardHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    marginBottom: Space.sm,
+  },
+  heading: {
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    flexShrink: 1,
+  },
+  label: {
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+  },
+  text: {
+    fontSize: TypeScale.body,
+    lineHeight: 22,
+    color: DesignColors.textSecondary,
+    flexShrink: 1,
+  },
+  helperText: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.textMuted,
+  },
+  error: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.errorText,
+  },
+  monoText: {
+    fontSize: TypeScale.caption,
+    color: DesignColors.textMuted,
+  },
+
+  candidateBox: {
+    gap: Space.xs,
+    padding: Space.md,
+    borderRadius: Radii.md,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+    backgroundColor: DesignColors.primarySoft,
+  },
+  candidateName: {
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+  },
+
+  loadingCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space.md,
+    padding: Space.xxxl,
+    backgroundColor: DesignColors.surface,
+    borderRadius: Radii.lg,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.border,
+  },
+  loadingText: { fontSize: TypeScale.body, color: DesignColors.textMuted },
+  emptyActions: { gap: Space.sm, alignSelf: 'stretch' },
+
+  adminCard: { gap: Space.md },
+  donorHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md },
+  adminHeaderText: { flex: 1, gap: Space.xxs },
+  smallAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: DesignColors.surfaceMuted,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.border,
+  },
+  smallAvatarText: {
+    fontSize: TypeScale.small,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.textSecondary,
+  },
+  adminName: {
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    lineHeight: 22,
+    color: DesignColors.text,
+  },
+
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm },
+  actionButton: { flexGrow: 1, flexBasis: 140 },
+
+  pagination: { gap: Space.sm, marginTop: Space.sm },
+  paginationRow: { flexDirection: 'row', gap: Space.sm },
+  paginationButton: { flex: 1 },
+
+  overlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17, 24, 39, 0.5)',
+    padding: Space.lg,
+  },
+  dialog: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '100%',
+    backgroundColor: DesignColors.surface,
+    borderRadius: Radii.xl,
+    padding: Space.xl,
+    gap: Space.md,
+  },
+  dialogContent: { padding: Space.xl, gap: Space.md },
+  dialogTitle: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.text,
+  },
+  dialogSubject: {
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+  },
+  dialogActions: { gap: Space.sm, marginTop: Space.xs },
+
+  input: {
+    minHeight: Layout.inputHeight,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.borderStrong,
+    borderRadius: Radii.sm,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+    fontSize: TypeScale.bodyLarge,
+    color: DesignColors.text,
+    backgroundColor: DesignColors.surface,
+  },
+  reasonInput: {
+    minHeight: 110,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.borderStrong,
+    borderRadius: Radii.sm,
+    padding: Space.md,
+    fontSize: TypeScale.bodyLarge,
+    lineHeight: 22,
+    color: DesignColors.text,
+    backgroundColor: DesignColors.surface,
+  },
 });

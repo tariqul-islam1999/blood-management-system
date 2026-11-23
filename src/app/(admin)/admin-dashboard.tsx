@@ -1,52 +1,81 @@
 import { useCallback, useRef, useState } from 'react';
 import {
-  ActivityIndicator, AppState, FlatList, KeyboardAvoidingView, Modal,
-  Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  AppState,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { supabase } from '../../lib/supabase';
-import {
-  adminListPendingDonors, adminReviewDonor, isActiveAdministrator, PendingDonor,
-  ReviewDecision, validateRejectionReason, VerificationError,
-} from '../../lib/admin-donor-verification';
+import { Href, Stack, useFocusEffect, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 
-type ScreenState = 'loading' | 'ready' | 'inactive' | 'error' | 'unauthorized' | 'expired';
-const PAGE_SIZE = 20;
+import { supabase } from '../../lib/supabase';
+import { isActiveAdministrator } from '../../lib/admin-donor-verification';
+import { AppButton, AppCard, EmptyState, ListRow, StatusBadge } from '../../components/ui';
+import {
+  DesignColors,
+  FontWeight,
+  Layout,
+  Radii,
+  Space,
+  TypeScale,
+} from '../../constants/design-tokens';
+
+/**
+ * Admin Home.
+ *
+ * DATA RULES - every value rendered here comes from a real source:
+ * - `full_name`, `role`, `account_status`: the signed-in admin's own `profiles`
+ *   row (the only profile row RLS lets any user read: "Users can view own profile").
+ * - Everything else on this screen is static explanatory copy taken from the
+ *   approved donor-verification documentation. No pending-donor totals, request
+ *   counts or other aggregate statistics are shown, because no Admin aggregate
+ *   RPC exists to provide them.
+ *
+ * No navigation entry is offered for User management or Blood request
+ * management: neither has a screen, a service wrapper or a backend RPC.
+ */
+
+type ScreenState = 'loading' | 'ready' | 'unauthorized' | 'expired' | 'error';
+
+type AdminIdentity = {
+  full_name: string;
+  role: 'admin' | 'super_admin';
+};
+
+/** First letters of up to two words, upper-cased. */
+function toInitials(value: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  if (words.length === 0) return '?';
+  return words.map((word) => word[0]?.toUpperCase() ?? '').join('');
+}
+
 
 export default function AdminDashboard() {
   const router = useRouter();
   const [state, setState] = useState<ScreenState>('loading');
   const [message, setMessage] = useState('');
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-  const [donors, setDonors] = useState<PendingDonor[]>([]);
-  const [page, setPage] = useState(0);
-  const [hasNextPage, setHasNextPage] = useState(false);
-  const [selected, setSelected] = useState<PendingDonor | null>(null);
-  const [decision, setDecision] = useState<ReviewDecision>('approved');
-  const [reason, setReason] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [dialogError, setDialogError] = useState('');
-  const [bannerMessage, setBannerMessage] = useState('');
+  const [identity, setIdentity] = useState<AdminIdentity | null>(null);
+
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+
   const generation = useRef(0);
   const focused = useRef(false);
-  // Guards against a second submit before the disabled state re-renders.
-  const submitting = useRef(false);
+  // Guards a second sign-out before the disabled state re-renders.
+  const signingOut = useRef(false);
 
-  const clearPrivateData = useCallback(() => {
-    setIsSuperAdmin(false);
-    setDonors([]);
-    setSelected(null);
-    setReason('');
-    setHasNextPage(false);
-  }, []);
-
-  const load = useCallback(async (requestedPage = 0) => {
+  const load = useCallback(async () => {
     const request = ++generation.current;
     const current = () => focused.current && request === generation.current;
-    clearPrivateData();
     setState('loading');
     setMessage('');
+    setIdentity(null);
     try {
       // getUser validates the identity with Auth; permissions come from profiles.
       const { data, error } = await supabase.auth.getUser();
@@ -56,73 +85,77 @@ export default function AdminDashboard() {
             error.name === 'AuthSessionMissingError' ||
             ['refresh_token_not_found', 'refresh_token_already_used',
               'session_not_found', 'user_not_found'].includes(error.code ?? '')) {
-          throw new VerificationError('expired', 'Your session has expired or you are signed out. Please log in again.');
+          setState('expired');
+          setMessage('Your session has expired or you are signed out. Please log in again.');
+          return;
         }
-        throw new Error('Unable to verify your session. Check your connection and retry.');
+        setState('error');
+        setMessage('Unable to verify your session. Check your connection and retry.');
+        return;
       }
       if (!data.user) {
-        throw new VerificationError('expired', 'You are signed out. Please log in again.');
+        setState('expired');
+        setMessage('You are signed out. Please log in again.');
+        return;
       }
+
       const { data: profile, error: profileError } = await supabase
-        .from('profiles').select('role, account_status').eq('id', data.user.id).maybeSingle();
+        .from('profiles').select('full_name, role, account_status').eq('id', data.user.id).maybeSingle();
       if (!current()) return;
       if (profileError) {
         if (profileError.code === '42501') {
-          throw new VerificationError('unauthorized', 'An active admin or super admin account is required.');
+          setState('unauthorized');
+          setMessage('An active admin or super admin account is required.');
+          return;
         }
         if (['PGRST301', 'PGRST302', 'PGRST303'].includes(profileError.code)) {
-          throw new VerificationError('expired', 'Your session has expired. Please log in again.');
+          setState('expired');
+          setMessage('Your session has expired. Please log in again.');
+          return;
         }
-        throw new Error('Unable to verify your account. Check your connection and retry.');
-      }
-      if (!isActiveAdministrator(profile)) {
-        throw new VerificationError('unauthorized', 'An active admin or super admin account is required.');
-      }
-      setIsSuperAdmin(profile?.role === 'super_admin');
-      // The wrapper refuses to call the undeployed RPC. Never fall back to table reads.
-      const rows = await adminListPendingDonors(PAGE_SIZE, requestedPage * PAGE_SIZE);
-      if (!current()) return;
-      setDonors(rows);
-      setPage(requestedPage);
-      setHasNextPage(rows.length === PAGE_SIZE && (requestedPage + 1) * PAGE_SIZE <= 100000);
-      setState('ready');
-    } catch (error) {
-      if (!current()) return;
-      if (error instanceof VerificationError) {
-        if (error.code === 'expired' || error.code === 'unauthorized') setIsSuperAdmin(false);
-        setState(error.code === 'inactive' || error.code === 'expired' ||
-          error.code === 'unauthorized' ? error.code : 'error');
-        setMessage(error.message);
-      } else {
         setState('error');
-        setMessage('Unable to load the dashboard. Check your connection and retry.');
+        setMessage('Unable to verify your account. Check your connection and retry.');
+        return;
       }
+      // Same authorisation predicate used by the donor verification screen.
+      if (!isActiveAdministrator(profile)) {
+        setState('unauthorized');
+        setMessage('An active admin or super admin account is required.');
+        return;
+      }
+      const row = profile as { full_name: string; role: 'admin' | 'super_admin' };
+      setIdentity({ full_name: row.full_name, role: row.role });
+      setState('ready');
+    } catch {
+      if (!current()) return;
+      setState('error');
+      setMessage('Unable to load your dashboard. Check your connection and retry.');
     }
-  }, [clearPrivateData]);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     focused.current = true;
     void load();
-    // Route focus alone does not cover returning from the background on mobile.
+    // Returning from the background on mobile must re-check the session.
     const appSubscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         void load();
       } else {
         ++generation.current;
-        clearPrivateData();
+        setIdentity(null);
         setState('loading');
       }
     });
     const { data: authSubscription } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT' || event === 'USER_UPDATED' || event === 'SIGNED_IN') {
         ++generation.current;
-        clearPrivateData();
+        setIdentity(null);
         if (event === 'SIGNED_OUT') {
           setState('expired');
           setMessage('You are signed out. Please log in again.');
         } else {
-          // Avoid calling Auth methods synchronously inside its change callback.
           setState('loading');
+          // Auth calls must not run synchronously inside its change callback.
           setTimeout(() => { if (focused.current) void load(); }, 0);
         }
       }
@@ -132,266 +165,423 @@ export default function AdminDashboard() {
       ++generation.current;
       appSubscription.remove();
       authSubscription.subscription.unsubscribe();
-      clearPrivateData();
+      setIdentity(null);
     };
-  }, [load, clearPrivateData]));
+  }, [load]));
 
-  const openReview = (donor: PendingDonor, initialDecision: ReviewDecision = 'approved') => {
-    if (submitting.current) return;
-    setDecision(initialDecision);
-    setReason('');
-    setDialogError('');
-    setBannerMessage('');
-    setSelected(donor);
+  const openLogout = () => {
+    if (isLoggingOut) return;
+    setLogoutError('');
+    setConfirmingLogout(true);
   };
-  const closeReview = () => {
-    if (submitting.current) return;
-    setSelected(null);
-    setReason('');
-    setDialogError('');
-  };
-  const reasonError = decision === 'rejected' ? validateRejectionReason(reason) : null;
 
-  const submitReview = async () => {
-    if (!selected || submitting.current) return;
-    if (decision === 'rejected' && reasonError !== null) {
-      setDialogError(reasonError);
-      return;
-    }
-    submitting.current = true;
-    setIsSubmitting(true);
-    setDialogError('');
+  const closeLogout = () => {
+    if (signingOut.current) return;
+    setConfirmingLogout(false);
+    setLogoutError('');
+  };
+
+  const confirmLogout = async () => {
+    if (signingOut.current) return;
+    signingOut.current = true;
+    setIsLoggingOut(true);
+    setLogoutError('');
     try {
-      // Identity, reviewer role and timestamps are derived server-side.
-      await adminReviewDonor(
-        selected.donor_id,
-        decision,
-        decision === 'rejected' ? reason.trim() : null,
-      );
-      const approved = decision === 'approved';
-      setSelected(null);
-      setReason('');
-      setBannerMessage(approved
-        ? 'Donor approved. The donor is now verified and can set their own availability.'
-        : 'Donor rejected. The registration stays unverified and unavailable.');
-      // A reviewed donor leaves the pending queue, so restart from the first page.
-      setPage(0);
-      void load(0);
+      // Existing Supabase sign-out path, identical to the donor/beneficiary screens.
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setConfirmingLogout(false);
+      router.replace('/login');
     } catch (error) {
-      if (error instanceof VerificationError) {
-        if (error.code === 'invalid' || error.code === 'request') {
-          setDialogError(error.message);
-        } else if (error.code === 'stale') {
-          // Someone else already reviewed this donor: refresh the queue.
-          setSelected(null);
-          setReason('');
-          setBannerMessage(error.message);
-          setPage(0);
-          void load(0);
-        } else {
-          // expired / unauthorized / inactive fall back to the existing screen states.
-          setSelected(null);
-          setReason('');
-          if (error.code === 'inactive') {
-            setState('inactive');
-          } else {
-            setIsSuperAdmin(false);
-            setState(error.code === 'expired' ? 'expired' : 'unauthorized');
-          }
-          setMessage(error.message);
-        }
-      } else {
-        setDialogError('The review could not be submitted. Check your connection and retry.');
-      }
+      // Stay signed in and keep the dialog open so the admin can retry.
+      setLogoutError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Sign out failed. Check your connection and try again.',
+      );
     } finally {
-      submitting.current = false;
-      setIsSubmitting(false);
+      signingOut.current = false;
+      setIsLoggingOut(false);
     }
   };
+
+  const roleLabel = identity?.role === 'super_admin' ? 'Super administrator' : 'Administrator';
+
 
   return (
     <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
-      <Stack.Screen options={{ title: 'Admin Dashboard' }} />
-      <FlatList
-        data={state === 'ready' ? donors : []}
-        keyExtractor={(donor) => donor.donor_id}
-        contentContainerStyle={styles.content}
-        ListHeaderComponent={
-          <View style={styles.section}>
-            <Text style={styles.title} accessibilityRole="header">Donor verification</Text>
-            <Text style={styles.text}>Review pending donor registrations.</Text>
-            {isSuperAdmin && (
-              <Pressable accessibilityRole="link" style={styles.secondaryButton}
-                onPress={() => router.replace('/super-admin-dashboard')}>
-                <Text style={styles.secondaryText}>Return to Super Admin Dashboard</Text>
-              </Pressable>
-            )}
-            {bannerMessage !== '' && (
-              <View style={styles.card} accessibilityLiveRegion="polite">
-                <Text style={styles.text}>{bannerMessage}</Text>
+      <Stack.Screen options={{ title: 'Admin' }} />
+
+      {state === 'loading' ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color={DesignColors.primary} accessibilityLabel="Loading dashboard" />
+          <Text style={styles.centeredText}>Checking access...</Text>
+        </View>
+      ) : state === 'ready' && identity ? (
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {/* Header: identity, role, logout entry point */}
+          <View style={styles.header}>
+            <View style={styles.avatar} accessible={false}>
+              <Text style={styles.avatarText}>{toInitials(identity.full_name)}</Text>
+            </View>
+            <View style={styles.headerText}>
+              <Text style={styles.eyebrow}>Signed in as</Text>
+              <Text style={styles.title} accessibilityRole="header" numberOfLines={2}>
+                {identity.full_name}
+              </Text>
+              <View style={styles.badgeRow}>
+                <StatusBadge status="active" label={roleLabel} />
               </View>
-            )}
-            <Text style={styles.heading} accessibilityRole="header">Pending donors</Text>
-            {state === 'ready' && donors.length > 0 && (
-              <Text style={styles.text}>Page {page + 1} · {donors.length} registrations on this page</Text>
-            )}
-          </View>
-        }
-        ListEmptyComponent={
-          <View style={styles.card} accessibilityLiveRegion="polite">
-            {state === 'loading' ? (
-              <><ActivityIndicator color="#991B1B" accessibilityLabel="Checking admin access" />
-                <Text style={styles.text}>Checking access and loading the queue…</Text></>
-            ) : (
-              <>
-                <Text style={styles.heading}>
-                  {state === 'ready' ? 'No pending donors' :
-                    state === 'unauthorized' ? 'Access denied' :
-                    state === 'expired' ? 'Login required' :
-                    state === 'inactive' ? 'Queue unavailable' : 'Unable to load donors'}
-                </Text>
-                <Text style={styles.text}>
-                  {state === 'ready' ? 'There are no pending registrations on this page.' : message}
-                </Text>
-                {state === 'inactive' && <Text style={styles.text}>The pending queue cannot be loaded before activation. This does not mean the queue is empty.</Text>}
-                <Pressable accessibilityRole="button" style={styles.button}
-                  onPress={() => state === 'expired' || state === 'unauthorized'
-                    ? router.replace('/login') : void load()}>
-                  <Text style={styles.buttonText}>
-                    {state === 'expired' || state === 'unauthorized' ? 'Go to login' :
-                      state === 'ready' ? 'Refresh' : 'Retry'}
-                  </Text>
-                </Pressable>
-              </>
-            )}
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.heading}>{item.full_name}</Text>
-            <Text style={styles.text}>Blood group: {item.blood_group} · Age: {item.age_years ?? 'Not provided'}</Text>
-            <Text style={styles.text}>District: {item.district}</Text>
-            <Text style={styles.text}>Thana: {item.thana}</Text>
-            <Text style={styles.text}>Local area: {item.local_area || 'Not provided'}</Text>
-            <Text style={styles.text}>Last donation: {item.last_donation_date ?? 'Not provided'}</Text>
-            <Text style={styles.text}>Registered: {new Date(item.registered_at).toLocaleDateString()}</Text>
-            <Text style={styles.pending}>Pending verification</Text>
-            <View style={styles.actions}>
-              <Pressable accessibilityRole="button" disabled={isSubmitting}
-                accessibilityState={{ disabled: isSubmitting }}
-                style={[styles.button, isSubmitting && styles.disabled]}
-                onPress={() => openReview(item, 'approved')}>
-                <Text style={styles.buttonText}>Approve</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" disabled={isSubmitting}
-                accessibilityState={{ disabled: isSubmitting }}
-                style={[styles.button, isSubmitting && styles.disabled]}
-                onPress={() => openReview(item, 'rejected')}>
-                <Text style={styles.buttonText}>Reject</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel={`Review details for ${item.full_name}`}
-                style={styles.secondaryButton} onPress={() => openReview(item)}>
-                <Text style={styles.secondaryText}>Review details</Text>
-              </Pressable>
             </View>
           </View>
-        )}
-        ListFooterComponent={state === 'ready' ? (
-          <View style={styles.actions}>
-            <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={() => void load()}>
-              <Text style={styles.secondaryText}>Refresh queue</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" disabled={page === 0}
-              accessibilityState={{ disabled: page === 0 }}
-              style={[styles.secondaryButton, page === 0 && styles.disabled]} onPress={() => void load(page - 1)}>
-              <Text style={styles.secondaryText}>Previous</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" disabled={!hasNextPage}
-              accessibilityState={{ disabled: !hasNextPage }}
-              style={[styles.secondaryButton, !hasNextPage && styles.disabled]} onPress={() => void load(page + 1)}>
-              <Text style={styles.secondaryText}>Next</Text>
+
+          {/* Quick actions: only implemented destinations */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Quick actions</Text>
+            <AppCard style={styles.noPadding}>
+              <View style={styles.cardBody}>
+                <ListRow
+                  title="Donor verification"
+                  subtitle="Review pending donor registrations"
+                  onPress={() => router.push('/admin-verification' as Href)}
+                />
+              </View>
+            </AppCard>
+            {identity.role === 'super_admin' && (
+              <AppCard style={styles.noPadding}>
+                <View style={styles.cardBody}>
+                  <ListRow
+                    title="Admin management"
+                    subtitle="Appoint or revoke administrator access"
+                    onPress={() => router.replace('/super-admin-dashboard')}
+                  />
+                </View>
+              </AppCard>
+            )}
+          </View>
+
+          {/* What this account can do */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Your access</Text>
+            <AppCard>
+              <View style={styles.definitionRow}>
+                <Text style={styles.definitionLabel}>Role</Text>
+                <Text style={styles.definitionValue}>{roleLabel}</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.definitionRow}>
+                <Text style={styles.definitionLabel}>Account status</Text>
+                <StatusBadge status="active" />
+              </View>
+              <View style={styles.divider} />
+              <Text style={styles.bodyText}>
+                {identity.role === 'super_admin'
+                  ? 'You can review donor registrations and manage administrator access.'
+                  : 'You can review pending donor registrations and record approval or rejection decisions.'}
+              </Text>
+            </AppCard>
+          </View>
+
+          {/* Approved informational content (documented facts only) */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">About verification</Text>
+            <AppCard>
+              <View style={styles.infoHeading}>
+                <SymbolView
+                  name={{ ios: 'checkmark.shield', android: 'verified_user', web: 'verified_user' }}
+                  size={20}
+                  tintColor={DesignColors.primary}
+                />
+                <Text style={styles.cardTitle}>What approval means</Text>
+              </View>
+              <Text style={styles.bodyText}>
+                Approval is an administrative review of a registration. It does not establish
+                medical fitness or blood safety, and it does not change the donor's
+                availability.
+              </Text>
+            </AppCard>
+
+            <AppCard>
+              <View style={styles.infoHeading}>
+                <SymbolView
+                  name={{ ios: 'person.crop.circle.badge.questionmark', android: 'person', web: 'person' }}
+                  size={20}
+                  tintColor={DesignColors.primary}
+                />
+                <Text style={styles.cardTitle}>Information shown in the queue</Text>
+              </View>
+              <Text style={styles.bodyText}>
+                The pending queue shows the donor's name, blood group, age, district,
+                thana, local area and registration date. Contact details, photos and exact
+                dates of birth are intentionally excluded.
+              </Text>
+            </AppCard>
+
+            <AppCard>
+              <View style={styles.infoHeading}>
+                <SymbolView
+                  name={{ ios: 'arrow.triangle.2.circlepath', android: 'fact_check', web: 'fact_check' }}
+                  size={20}
+                  tintColor={DesignColors.primary}
+                />
+                <Text style={styles.cardTitle}>Working a shared queue</Text>
+              </View>
+              <Text style={styles.bodyText}>
+                Several administrators can review the same queue. If another administrator has
+                already decided on a registration, your decision is rejected as no longer
+                pending and the queue reloads from the first page.
+              </Text>
+            </AppCard>
+          </View>
+
+          {/* Logout entry point */}
+          <View style={styles.section}>
+            <AppButton
+              label="Log out"
+              variant="outline"
+              accessibilityLabel={`Log out of ${identity.full_name}`}
+              onPress={openLogout}
+            />
+          </View>
+        </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={styles.content}>
+          <EmptyState
+            icon={{ ios: 'exclamationmark.triangle', android: 'error', web: 'error' }}
+            title={
+              state === 'unauthorized' ? 'Access denied' :
+              state === 'expired' ? 'Login required' : 'Unable to load dashboard'
+            }
+            description={message}
+            action={
+              <AppButton
+                label={state === 'expired' || state === 'unauthorized' ? 'Go to login' : 'Retry'}
+                variant="primary"
+                onPress={() => {
+                  if (state === 'expired' || state === 'unauthorized') {
+                    void router.replace('/login');
+                  } else {
+                    void load();
+                  }
+                }}
+              />
+            }
+          />
+        </ScrollView>
+      )}
+
+
+      {/* Logout confirmation. A Modal (not Alert) because Alert.alert is a
+          no-op in react-native-web, and logout must be confirmed on web too. */}
+      <Modal
+        visible={confirmingLogout}
+        transparent
+        animationType="fade"
+        onRequestClose={closeLogout}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.dialog} accessibilityViewIsModal>
+            <Text style={styles.dialogTitle} accessibilityRole="header">Log out?</Text>
+            <Text style={styles.bodyText}>
+              You will be returned to the login screen and will need to sign in again to review
+              donor registrations.
+            </Text>
+            {logoutError !== '' && (
+              <Text style={styles.error} accessibilityLiveRegion="polite">{logoutError}</Text>
+            )}
+            <View style={styles.dialogActions}>
+              <AppButton
+                label="Log out"
+                variant="primary"
+                loading={isLoggingOut}
+                onPress={() => void confirmLogout()}
+                style={styles.dialogButton}
+              />
+              <AppButton
+                label="Cancel"
+                variant="outline"
+                disabled={isLoggingOut}
+                onPress={closeLogout}
+                style={styles.dialogButton}
+              />
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss and stay signed in"
+              disabled={isLoggingOut}
+              onPress={closeLogout}
+              style={styles.overlayDismiss}
+            >
+              <Text style={styles.overlayDismissText}>Keep me signed in</Text>
             </Pressable>
           </View>
-        ) : undefined}
-      />
-      <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={closeReview}>
-        <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <SafeAreaView style={styles.dialog} accessibilityViewIsModal>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.section}>
-              <Text style={styles.heading} accessibilityRole="header">Confirm donor review</Text>
-              <Text style={styles.text}>{selected?.full_name}</Text>
-              {isSubmitting && (
-                <Text style={styles.text} accessibilityLiveRegion="polite">
-                  Submitting the {decision === 'approved' ? 'approval' : 'rejection'}…
-                </Text>
-              )}
-              {dialogError !== '' && (
-                <Text style={styles.error} accessibilityLiveRegion="polite">{dialogError}</Text>
-              )}
-              <View style={styles.actions}>
-                {(['approved', 'rejected'] as const).map((value) => (
-                  <Pressable key={value} accessibilityRole="radio"
-                    accessibilityState={{ checked: decision === value, disabled: isSubmitting }}
-                    style={[styles.secondaryButton, decision === value && styles.chosen]}
-                    onPress={() => { setDecision(value); setReason(''); setDialogError(''); }}
-                    disabled={isSubmitting}>
-                    <Text style={styles.secondaryText}>{value === 'approved' ? 'Approval' : 'Rejection'}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              {decision === 'rejected' ? (
-                <>
-                  <Text style={styles.heading}>Rejection reason (required)</Text>
-                  <Text style={styles.text}>Use 10–500 characters. Give a brief operational reason; avoid medical details and unnecessary personal information.</Text>
-                  <TextInput accessibilityLabel="Rejection reason, required, 10 to 500 characters"
-                    style={styles.input} multiline textAlignVertical="top" value={reason} onChangeText={setReason}
-                    placeholder="Explain why this registration needs to be rejected" placeholderTextColor="#6B7280" />
-                  <Text style={styles.text}>{Array.from(reason.trim()).length}/500 characters</Text>
-                  {reasonError && <Text style={styles.error} accessibilityLiveRegion="polite">{reasonError}</Text>}
-                  <Text style={styles.text}>Confirming rejection would remove this registration from the pending queue.</Text>
-                </>
-              ) : <Text style={styles.text}>Confirming approval would verify this registration. Approval does not establish medical fitness or change donor availability.</Text>}
-              <Pressable accessibilityRole="button" onPress={() => void submitReview()}
-                disabled={isSubmitting || reasonError !== null}
-                accessibilityState={{ disabled: isSubmitting || reasonError !== null }}
-                style={[styles.button, (isSubmitting || reasonError !== null) && styles.disabled]}>
-                <Text style={styles.buttonText}>
-                  {isSubmitting ? 'Submitting…'
-                    : decision === 'approved' ? 'Confirm approval' : 'Confirm rejection'}
-                </Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={closeReview}
-                disabled={isSubmitting} accessibilityState={{ disabled: isSubmitting }}>
-                <Text style={styles.secondaryText}>Cancel</Text>
-              </Pressable>
-            </ScrollView>
-          </SafeAreaView>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#FFF5F5' },
-  content: { flexGrow: 1, width: '100%', maxWidth: 960, alignSelf: 'center', padding: 20, gap: 16 },
-  section: { gap: 14 },
-  title: { fontSize: 28, fontWeight: '700', color: '#991B1B' },
-  heading: { fontSize: 19, fontWeight: '600', color: '#111827' },
-  text: { fontSize: 16, lineHeight: 24, color: '#374151', flexShrink: 1 },
-  notice: { padding: 16, gap: 8, borderWidth: 1, borderColor: '#D97706', borderRadius: 12, backgroundColor: '#FFFBEB' },
-  noticeTitle: { fontSize: 17, fontWeight: '700', color: '#78350F' },
-  card: { padding: 20, gap: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  button: { minHeight: 48, justifyContent: 'center', alignItems: 'center', padding: 14, borderRadius: 10, backgroundColor: '#991B1B' },
-  buttonText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF', textAlign: 'center' },
-  secondaryButton: { minHeight: 48, padding: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: '#991B1B' },
-  secondaryText: { fontSize: 16, fontWeight: '600', color: '#991B1B', textAlign: 'center' },
-  disabled: { opacity: 0.5 },
-  pending: { fontSize: 15, fontWeight: '600', color: '#78350F' },
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 20 },
-  dialog: { width: '100%', maxWidth: 600, maxHeight: '100%', padding: 20, borderRadius: 16, backgroundColor: '#FFFFFF' },
-  chosen: { backgroundColor: '#FEE2E2', borderWidth: 2 },
-  input: { minHeight: 120, borderWidth: 1, borderColor: '#6B7280', padding: 12, borderRadius: 8, fontSize: 16, color: '#111827' },
-  error: { fontSize: 15, color: '#991B1B' },
+  screen: { flex: 1, backgroundColor: DesignColors.background },
+  content: {
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    // Clearance for the bottom tab bar.
+    paddingBottom: Space.xxxl,
+    gap: Space.xxl,
+  },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space.md,
+    padding: Space.lg,
+  },
+  centeredText: {
+    fontSize: TypeScale.body,
+    color: DesignColors.textMuted,
+  },
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+  },
+  avatarText: {
+    fontSize: TypeScale.subtitle,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.primaryDeep,
+  },
+  headerText: {
+    flex: 1,
+    gap: Space.xxs,
+  },
+  eyebrow: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.medium,
+    color: DesignColors.textMuted,
+    letterSpacing: 0.6,
+  },
+  title: {
+    fontSize: TypeScale.heading,
+    fontWeight: FontWeight.bold,
+    lineHeight: 30,
+    color: DesignColors.text,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+    marginTop: Space.xs,
+  },
+
+  section: { gap: Space.md },
+  sectionTitle: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.text,
+  },
+  // Let `ListRow` own the inner padding inside a card.
+  noPadding: { padding: 0 },
+  cardBody: {
+    paddingHorizontal: Space.lg,
+  },
+
+  infoHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    marginBottom: Space.sm,
+  },
+  cardTitle: {
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    flexShrink: 1,
+  },
+  bodyText: {
+    fontSize: TypeScale.body,
+    lineHeight: 22,
+    color: DesignColors.textSecondary,
+  },
+
+  definitionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    minHeight: 32,
+  },
+  definitionLabel: {
+    fontSize: TypeScale.body,
+    color: DesignColors.textMuted,
+  },
+  definitionValue: {
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  divider: {
+    height: Layout.hairline,
+    backgroundColor: DesignColors.border,
+    marginVertical: Space.md,
+  },
+
+  overlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17, 24, 39, 0.5)',
+    padding: Space.lg,
+  },
+  dialog: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: DesignColors.surface,
+    borderRadius: Radii.xl,
+    padding: Space.xl,
+    gap: Space.md,
+  },
+  dialogTitle: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.text,
+  },
+  dialogActions: {
+    gap: Space.sm,
+    marginTop: Space.xs,
+  },
+  dialogButton: {
+    alignSelf: 'stretch',
+  },
+  error: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.errorText,
+  },
+  overlayDismiss: {
+    alignSelf: 'center',
+    paddingVertical: Space.sm,
+  },
+  overlayDismissText: {
+    fontSize: TypeScale.small,
+    fontWeight: FontWeight.medium,
+    color: DesignColors.textMuted,
+  },
 });

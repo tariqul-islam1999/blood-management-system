@@ -17,7 +17,12 @@ import {
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Href, useRouter, useFocusEffect } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { supabase } from '../../lib/supabase';
+import { AppButton, AppCard, EmptyState, StatusBadge } from '../../components/ui';
+import {
+  DesignColors, FontWeight, Layout, Radii, Space, TypeScale,
+} from '../../constants/design-tokens';
 import {
   DONOR_ELIGIBILITY_SERVICE_ACTIVE,
   DONOR_ELIGIBILITY_SERVICE_MESSAGE,
@@ -394,152 +399,117 @@ export default function DonorDashboard() {
   // ========== DASHBOARD UI ==========
 
   return (
-    <SafeAreaView
-      style={styles.container}
-      edges={['bottom']}
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-
-        {/* HEADER */}
-
+    <SafeAreaView style={styles.container} edges={['bottom']}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-
           <Pressable
-            onPress={() =>
-              router.push('/upload-profile-photo')
-            }
-            style={styles.photoWrapper}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+            onPress={() => router.push('/upload-profile-photo')}
+            style={styles.profilePhotoPressable}
           >
             {photoUrl ? (
-              <Image
-                source={{ uri: photoUrl }}
-                style={styles.profilePhoto}
-              />
+              <Image source={{ uri: photoUrl }} style={styles.profilePhoto} />
             ) : (
               <View style={styles.photoPlaceholder}>
-                <Text style={styles.photoIcon}>
-                  👤
-                </Text>
+                <SymbolView
+                  name={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
+                  size={48}
+                  tintColor={DesignColors.primary}
+                />
               </View>
             )}
           </Pressable>
-
-          <Text style={styles.title}>
-            Donor Dashboard
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Welcome, {profile.fullName}!
-          </Text>
-
-          <Text style={styles.photoHint}>
-            Tap your photo to change it
-          </Text>
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>Donor home</Text>
+            <Text style={styles.title} accessibilityRole="header">Welcome, {profile.fullName}</Text>
+            <Text style={styles.subtitle}>Your donation profile at a glance.</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+            onPress={() => router.push('/upload-profile-photo')}
+            style={styles.photoAction}
+          >
+            <SymbolView
+              name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }}
+              size={20}
+              tintColor={DesignColors.primary}
+            />
+          </Pressable>
         </View>
 
-        {/* DONOR INFORMATION */}
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            ❤️ My Donor Information
-          </Text>
-
-          <Text style={styles.label}>
-            Blood Group
-          </Text>
-
-          <Text style={styles.bloodGroup}>
-            {profile.bloodGroup}
-          </Text>
-
+        <AppCard style={styles.donorInfoCard}>
+          <View style={styles.infoTopRow}>
+            <View style={styles.bloodGroupCircle}>
+              <Text style={styles.bloodGroup}>{profile.bloodGroup}</Text>
+            </View>
+            <View style={styles.profileStatusColumn}>
+              <Text style={styles.cardTitle}>My donor profile</Text>
+              <View style={styles.statusRow}>
+                <StatusBadge
+                  status={profile.verificationStatus === 'approved' ? 'approved' : 'pending'}
+                  label={`Verification: ${profile.verificationStatus}`}
+                />
+                <StatusBadge
+                  status={profile.availabilityStatus === 'available' ? 'active' : 'deactivated'}
+                  label={profile.availabilityStatus === 'available' ? 'Available' : 'Unavailable'}
+                />
+              </View>
+            </View>
+          </View>
           <View style={styles.divider} />
-
-          <Text style={styles.label}>
-            Verification Status
-          </Text>
-
-          <Text style={styles.value}>
-            {profile.verificationStatus.toUpperCase()}
-          </Text>
-
-          <Text style={styles.label}>
-            Availability Status
-          </Text>
-
-          <Text style={styles.value}>
-            {profile.availabilityStatus.toUpperCase()}
-          </Text>
-
-          <Text style={styles.label}>
-            Location
-          </Text>
-
-          <Text style={styles.value}>
-            {profile.localArea}, {profile.thana}, {profile.district}
-          </Text>
-        </View>
+          <View style={styles.profileFactRow}>
+            <Text style={styles.label}>Location</Text>
+            <Text style={styles.value}>
+              {profile.localArea}, {profile.thana}, {profile.district}
+            </Text>
+          </View>
+          <Text style={styles.photoHint}>Tap the photo to update it.</Text>
+        </AppCard>
 
         {/* AVAILABILITY CARD */}
 
-        <View style={styles.availabilityCard}>
-
-          <Text style={styles.availabilityTitle}>
-            Donor Availability
-          </Text>
-
-          <View style={styles.availabilityRow}>
-
+        <AppCard style={styles.availabilityCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionIcon}>
+              <SymbolView
+                name={{ ios: 'heart.text.square', android: 'favorite', web: 'favorite' }}
+                size={19}
+                tintColor={DesignColors.primary}
+              />
+            </View>
             <View style={styles.availabilityInfo}>
-              <Text style={styles.availabilityLabel}>
-                {isAvailable ? 'Available' : 'Unavailable'}
-              </Text>
-
+              <Text style={styles.availabilityTitle}>Donor Availability</Text>
               <Text style={styles.availabilityDescription}>
-                {isApproved
-                  ? 'Manage your availability status'
-                  : 'Admin approval is required'}
+                {isApproved ? 'Manage your availability status' : 'Admin approval is required'}
               </Text>
             </View>
-
             <Switch
               value={isAvailable}
               onValueChange={handleToggle}
-              disabled={
-                !isApproved ||
-                isUpdating ||
-                showReasonBox
-              }
-              trackColor={{
-                false: '#D1D5DB',
-                true: '#86EFAC',
-              }}
-              thumbColor={
-                isAvailable ? '#16A34A' : '#F3F4F6'
-              }
+              disabled={!isApproved || isUpdating || showReasonBox}
+              trackColor={{ false: DesignColors.borderStrong, true: DesignColors.successBorder }}
+              thumbColor={isAvailable ? DesignColors.success : DesignColors.surface}
+            />
+          </View>
+          <View style={styles.availabilityStatusRow}>
+            <StatusBadge
+              status={isAvailable ? 'active' : 'deactivated'}
+              label={isAvailable ? 'Available to donate' : 'Unavailable'}
             />
           </View>
 
-          {/* UNAVAILABLE REASON FORM */}
-
           {showReasonBox && (
             <View style={styles.reasonSection}>
-
-              <Text style={styles.reasonTitle}>
-                Why are you unavailable? *
-              </Text>
-
+              <Text style={styles.reasonTitle}>Why are you unavailable?</Text>
               <Text style={styles.reasonHint}>
-                Please explain why you are currently
-                unable to donate blood.
+                Please explain why you are currently unable to donate blood.
               </Text>
-
               <TextInput
                 style={styles.reasonInput}
                 placeholder="Enter your reason here..."
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={DesignColors.textMuted}
                 multiline
                 numberOfLines={4}
                 maxLength={500}
@@ -548,147 +518,122 @@ export default function DonorDashboard() {
                 value={unavailableReason}
                 onChangeText={setUnavailableReason}
               />
-
               <Text style={styles.characterCount}>
                 {unavailableReason.trim().length} / 500 characters
               </Text>
-
               <Text style={styles.privacyNote}>
-                This reason is private and intended
-                for you and authorized administrators.
+                This reason is private and intended for you and authorized administrators.
               </Text>
-
-              <Pressable
-                style={[
-                  styles.saveReasonButton,
-                  isUpdating && styles.disabledButton,
-                ]}
+              <AppButton
+                label="Save Unavailable Status"
+                variant="primary"
+                loading={isUpdating}
+                disabled={isUpdating}
                 onPress={handleSubmitReason}
+              />
+              <AppButton
+                label="Cancel"
+                variant="outline"
                 disabled={isUpdating}
-              >
-                {isUpdating ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>
-                    Save Unavailable Status
-                  </Text>
-                )}
-              </Pressable>
-
-              <Pressable
-                style={styles.cancelButton}
                 onPress={handleCancelReason}
-                disabled={isUpdating}
-              >
-                <Text style={styles.cancelText}>
-                  Cancel
-                </Text>
-              </Pressable>
-
+              />
             </View>
           )}
 
           {isUpdating && !showReasonBox && (
             <View style={styles.updatingRow}>
-              <ActivityIndicator
-                size="small"
-                color="#DC2626"
-              />
-
-              <Text style={styles.updatingText}>
-                Updating availability...
-              </Text>
+              <ActivityIndicator size="small" color={DesignColors.primary} />
+              <Text style={styles.updatingText}>Updating availability...</Text>
             </View>
           )}
 
           {!isApproved && (
             <Text style={styles.disabledHint}>
-              Availability can be changed after
-              administrator approval.
+              Availability can be changed after administrator approval.
             </Text>
           )}
-
-        </View>
+        </AppCard>
 
         {/* VERIFICATION NOTICE */}
 
         {!isApproved && (
-          <View style={styles.noticeCard}>
-            <Text style={styles.noticeTitle}>
-              Donor Verification
-            </Text>
-
+          <View style={styles.noticeCard} accessibilityLiveRegion="polite">
+            <View style={styles.sectionHeaderRow}>
+              <SymbolView
+                name={{ ios: 'clock', android: 'schedule', web: 'schedule' }}
+                size={19}
+                tintColor={DesignColors.warning}
+              />
+              <Text style={styles.noticeTitle}>Verification pending</Text>
+            </View>
             <Text style={styles.noticeText}>
-              Your donor account must be approved
-              by an administrator before you can
-              become an available donor.
+              Your donor account must be approved by an administrator before you can become an
+              available donor.
             </Text>
           </View>
         )}
 
-        {/* DONATION ELIGIBILITY AND HISTORY */}
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            🩸 Donation Eligibility
-          </Text>
+        <AppCard style={styles.eligibilityCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionIcon}>
+              <SymbolView
+                name={{ ios: 'drop', android: 'bloodtype', web: 'bloodtype' }}
+                size={19}
+                tintColor={DesignColors.primary}
+              />
+            </View>
+            <Text style={styles.cardTitle}>Donation Eligibility</Text>
+          </View>
 
           {!DONOR_ELIGIBILITY_SERVICE_ACTIVE && (
-            <Text style={styles.noticeText}>
-              {DONOR_ELIGIBILITY_SERVICE_MESSAGE}
-            </Text>
+            <View style={styles.inlineNotice}>
+              <Text style={styles.noticeText}>{DONOR_ELIGIBILITY_SERVICE_MESSAGE}</Text>
+            </View>
           )}
-
           {DONOR_ELIGIBILITY_SERVICE_ACTIVE && eligibilityNotice && (
-            <Text style={styles.noticeText}>{eligibilityNotice}</Text>
+            <Text style={styles.errorText}>{eligibilityNotice}</Text>
           )}
 
           {DONOR_ELIGIBILITY_SERVICE_ACTIVE && eligibility && (
             <>
-              <Text style={styles.label}>Last Donation</Text>
-              <Text style={styles.value}>
-                {eligibility.last_donation_date ?? 'Not recorded'}
-              </Text>
-
-              <Text style={styles.label}>Eligibility</Text>
-              <Text style={styles.value}>
-                {eligibility.is_eligible
-                  ? 'Eligible to donate'
-                  : `Recovery period — ${eligibility.days_remaining} day(s) remaining`}
-              </Text>
-
+              <View style={styles.profileFactRow}>
+                <Text style={styles.label}>Last donation</Text>
+                <Text style={styles.value}>{eligibility.last_donation_date ?? 'Not recorded'}</Text>
+              </View>
+              <View style={styles.profileFactRow}>
+                <Text style={styles.label}>Eligibility</Text>
+                <StatusBadge
+                  status={eligibility.is_eligible ? 'active' : 'pending'}
+                  label={eligibility.is_eligible
+                    ? 'Eligible'
+                    : `Recovery: ${eligibility.days_remaining} day(s) remaining`}
+                />
+              </View>
               {eligibility.next_eligible_date && (
-                <>
-                  <Text style={styles.label}>Next Eligible Date</Text>
-                  <Text style={styles.value}>
-                    {eligibility.next_eligible_date}
-                  </Text>
-                </>
+                <View style={styles.profileFactRow}>
+                  <Text style={styles.label}>Next eligible date</Text>
+                  <Text style={styles.value}>{eligibility.next_eligible_date}</Text>
+                </View>
               )}
-
               <View style={styles.divider} />
-
-              <Text style={styles.label}>Donation History</Text>
-
+              <Text style={styles.label}>Donation history</Text>
               {donations.length === 0 ? (
                 <Text style={styles.value}>No donations recorded yet.</Text>
               ) : (
                 donations.map((donation) => (
-                  <Text key={donation.donation_id} style={styles.value}>
-                    {donation.donated_on} ·{' '}
-                    {donation.source === 'admin'
-                      ? 'Recorded by admin'
-                      : 'Recorded by you'}
-                    {donation.note ? ` · ${donation.note}` : ''}
-                  </Text>
+                  <View key={donation.donation_id} style={styles.historyRow}>
+                    <Text style={styles.value}>
+                      {donation.donated_on} · {donation.source === 'admin'
+                        ? 'Recorded by admin' : 'Recorded by you'}
+                      {donation.note ? ` · ${donation.note}` : ''}
+                    </Text>
+                  </View>
                 ))
               )}
-
               <Text style={styles.privacyNote}>
-                Donation history is recorded automatically when a completed
-                donation is confirmed; manual recording is not available.
+                Donation history is recorded automatically when a completed donation is confirmed;
+                manual recording is not available.
               </Text>
-
               {!eligibility.is_eligible && (
                 <Text style={styles.privacyNote}>
                   Availability returns automatically on the next eligible date.
@@ -696,60 +641,46 @@ export default function DonorDashboard() {
               )}
             </>
           )}
+        </AppCard>
+
+        <AppCard style={styles.accountCard}>
+          <Text style={styles.cardTitle}>Blood Requests</Text>
+          <Text style={styles.availabilityDescription}>
+            Browse matching open requests. Accepting a request starts the donation steps and reveals
+            your identity to that beneficiary.
+          </Text>
+          <AppButton
+            label="Open Blood Requests"
+            variant="primary"
+            disabled={isUpdating}
+            onPress={() => router.push('/open-blood-requests' as Href)}
+          />
+        </AppCard>
+
+        <View style={styles.accountSection}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">My Account</Text>
+          <AppButton
+            label="Upload / Change Profile Photo"
+            variant="outline"
+            onPress={() => router.push('/upload-profile-photo')}
+          />
+          <AppButton
+            label="Refresh Dashboard"
+            variant="secondary"
+            loading={isLoading}
+            disabled={isUpdating}
+            onPress={loadProfile}
+          />
+          <AppButton
+            label="Logout"
+            variant="destructive"
+            loading={isLoggingOut}
+            disabled={isUpdating}
+            onPress={handleLogout}
+          />
         </View>
 
-        <View style={styles.bloodRequestCard}>
-          <Text style={styles.availabilityTitle}>Blood Requests</Text>
-          <Text style={styles.availabilityDescription}>Browse matching open blood requests. Accepting a request starts the donation steps and reveals your identity to that beneficiary.</Text>
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/open-blood-requests' as Href)} disabled={isUpdating} accessibilityRole="button">
-            <Text style={styles.secondaryButtonText}>Open Blood Requests</Text>
-          </Pressable>
-        </View>
-
-        {/* MY ACCOUNT */}
-
-        <Text style={styles.sectionTitle}>
-          My Account
-        </Text>
-
-        <Pressable
-          style={styles.primaryButton}
-          onPress={() =>
-            router.push('/upload-profile-photo')
-          }
-        >
-          <Text style={styles.primaryButtonText}>
-            📷 Upload / Change Profile Photo
-          </Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={loadProfile}
-          disabled={isUpdating}
-        >
-          <Text style={styles.secondaryButtonText}>
-            Refresh Dashboard
-          </Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.logoutButton}
-          onPress={handleLogout}
-          disabled={isLoggingOut || isUpdating}
-        >
-          {isLoggingOut ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.logoutText}>
-              Logout
-            </Text>
-          )}
-        </Pressable>
-
-        <Text style={styles.footerText}>
-          Blood Management System
-        </Text>
+        <Text style={styles.footerText}>Blood Management System</Text>
 
       </ScrollView>
     </SafeAreaView>
@@ -788,9 +719,41 @@ const styles = StyleSheet.create({
   },
 
   header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
-    marginBottom: 25,
+    gap: Space.md,
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
+    alignSelf: 'center',
+    marginTop: Space.md,
+    marginBottom: Space.xl,
+  },
+
+  profilePhotoPressable: {
+    borderRadius: Radii.full,
+  },
+
+  headerText: {
+    flex: 1,
+    gap: Space.xxs,
+  },
+
+  eyebrow: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.primary,
+    textTransform: 'uppercase',
+  },
+
+  photoAction: {
+    width: Layout.minTouchTarget,
+    height: Layout.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
   },
 
   photoWrapper: {
@@ -838,6 +801,95 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#DC2626',
     marginTop: 10,
+  },
+
+  donorInfoCard: {
+    gap: Space.sm,
+  },
+
+  infoTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+
+  bloodGroupCircle: {
+    width: Layout.avatarLarge,
+    height: Layout.avatarLarge,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+  },
+
+  profileStatusColumn: {
+    flex: 1,
+    gap: Space.sm,
+  },
+
+  statusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Space.xs,
+  },
+
+  profileFactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+
+  sectionIcon: {
+    width: Layout.minTouchTarget,
+    height: Layout.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.primarySoft,
+  },
+
+  availabilityStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Space.sm,
+  },
+
+  eligibilityCard: {
+    gap: Space.md,
+  },
+
+  inlineNotice: {
+    padding: Space.md,
+    borderRadius: Radii.md,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.warningBorder,
+    backgroundColor: DesignColors.warningSurface,
+  },
+
+  historyRow: {
+    paddingVertical: Space.sm,
+    borderBottomWidth: Layout.hairline,
+    borderBottomColor: DesignColors.border,
+  },
+
+  accountCard: {
+    gap: Space.md,
+  },
+
+  accountSection: {
+    gap: Space.md,
+    marginTop: Space.sm,
   },
 
   card: {

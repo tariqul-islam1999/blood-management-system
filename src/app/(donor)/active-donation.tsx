@@ -1,7 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Href, useLocalSearchParams, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+
+import { AppButton, AppCard, StatusBadge } from '../../components/ui';
+import { DesignColors, FontWeight, Layout, Radii, Space, TypeScale } from '../../constants/design-tokens';
 
 import {
   DONATION_WORKFLOW_SERVICE_ACTIVE,
@@ -146,67 +150,97 @@ export default function ActiveDonationScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Active Donation</Text>
-        <Text style={styles.description}>Track the donation one step at a time. Updates are confirmed by the server.</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.statusLabel}>Current status</Text>
-          <Text style={styles.status}>{STATUS_LABELS[status]}</Text>
+        <View style={styles.header}>
+          <View style={styles.headerIcon} accessible={false}>
+            <SymbolView
+              name={{ ios: 'drop.fill', android: 'water_drop', web: 'water_drop' }}
+              size={23}
+              tintColor={DesignColors.primary}
+            />
+          </View>
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>Donor journey</Text>
+            <Text style={styles.title} accessibilityRole="header">Active Donation</Text>
+            <Text style={styles.description}>Track each step. Updates are confirmed by the server.</Text>
+          </View>
         </View>
 
+        <AppCard style={styles.statusCard}>
+          <Text style={styles.sectionLabel}>CURRENT STATUS</Text>
+          <StatusBadge status={status} label={STATUS_LABELS[status]} />
+          <View style={styles.progressTrack} accessible={false}>
+            {(['selected', 'reached_location', 'donation_started', 'donation_ended', 'reached_home_safely'] as const).map((step, index) => {
+              const currentIndex = ['selected', 'reached_location', 'donation_started', 'donation_ended', 'reached_home_safely'].indexOf(status);
+              return <View key={step} style={[styles.progressStep, index <= currentIndex && styles.progressStepComplete]} />;
+            })}
+          </View>
+          <Text style={styles.statusDescription}>{STATUS_LABELS[status]}</Text>
+        </AppCard>
+
         {!DONATION_WORKFLOW_SERVICE_ACTIVE && <Notice />}
-        {error !== null && <Text style={styles.error}>{error}</Text>}
+        {error !== null && (
+          <AppCard style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Update not confirmed</Text>
+            <Text style={styles.error}>{error}</Text>
+          </AppCard>
+        )}
 
         {DONATION_WORKFLOW_SERVICE_ACTIVE && status !== 'reached_home_safely' && status !== 'donation_ended' && NEXT_ACTION[status] && (
-          <Pressable
-            style={[styles.primaryButton, isSubmitting && styles.disabled]}
+          <AppButton
+            label={NEXT_ACTION[status]!.label}
+            variant="primary"
+            loading={isSubmitting}
             disabled={isSubmitting}
-            accessibilityRole="button"
             onPress={transition}
-          >
-            {isSubmitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryText}>{NEXT_ACTION[status]!.label}</Text>}
-          </Pressable>
+          />
         )}
 
         {DONATION_WORKFLOW_SERVICE_ACTIVE && status === 'donation_ended' && (
-          <View style={styles.card}>
-            <Text style={styles.feelingTitle}>How are you feeling now?</Text>
+          <AppCard style={styles.actionCard}>
+            <Text style={styles.cardTitle} accessibilityRole="header">How are you feeling now?</Text>
+            <Text style={styles.supportingText}>Choose the option that best describes how you feel.</Text>
             {FEELING_OPTIONS.map((option) => (
               <Pressable
                 key={option.value}
-                style={[styles.feelingOption, feeling === option.value && styles.feelingSelected]}
+                style={({ pressed }) => [styles.feelingOption, feeling === option.value && styles.feelingSelected, pressed && styles.pressed]}
                 accessibilityRole="button"
-                accessibilityState={{ selected: feeling === option.value }}
+                accessibilityState={{ selected: feeling === option.value, disabled: isSubmitting }}
                 disabled={isSubmitting}
                 onPress={() => setFeeling(option.value)}
               >
                 <Text style={[styles.feelingText, feeling === option.value && styles.feelingTextSelected]}>{option.label}</Text>
+                {feeling === option.value && (
+                  <SymbolView name={{ ios: 'checkmark.circle.fill', android: 'check_circle', web: 'check_circle' }} size={20} tintColor={DesignColors.primary} />
+                )}
               </Pressable>
             ))}
-            <Pressable
-              style={[styles.primaryButton, (isSubmitting || !feeling) && styles.disabled]}
+            <AppButton
+              label="I have reached home safely"
+              variant="primary"
+              loading={isSubmitting}
               disabled={isSubmitting || !feeling}
-              accessibilityRole="button"
               onPress={recordHomeSafely}
-            >
-              <Text style={styles.primaryText}>{isSubmitting ? 'Updating...' : 'I have reached home safely'}</Text>
-            </Pressable>
-          </View>
+            />
+          </AppCard>
         )}
 
         {status === 'reached_home_safely' && (
-          <View style={styles.card}>
-            <Text style={styles.statusLabel}>Donation cycle complete</Text>
-            <Text style={styles.detail}>A two-day wellbeing follow-up becomes available 48 hours after you reached home safely.</Text>
+          <AppCard style={styles.completionCard}>
+            <View style={styles.completionIcon} accessible={false}>
+              <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} size={22} tintColor={DesignColors.successText} />
+            </View>
+            <Text style={styles.cardTitle} accessibilityRole="header">Donation cycle complete</Text>
+            <Text style={styles.supportingText}>A two-day wellbeing follow-up becomes available 48 hours after you reached home safely.</Text>
             {DONATION_WORKFLOW_SERVICE_ACTIVE && (
-              <Pressable style={styles.primaryButton} accessibilityRole="button" onPress={openFollowup}>
-                <Text style={styles.primaryText}>Open Follow-up</Text>
-              </Pressable>
+              <AppButton label="Open Follow-up" variant="primary" onPress={openFollowup} />
             )}
-          </View>
+          </AppCard>
         )}
 
-        <Text style={styles.disclaimer}>Status updates are workflow states only. No location tracking is used.</Text>
+        <View style={styles.disclaimerRow}>
+          <SymbolView name={{ ios: 'location.slash', android: 'location_off', web: 'location_off' }} size={16} tintColor={DesignColors.textMuted} />
+          <Text style={styles.disclaimer}>Status updates are workflow states only. No location tracking is used.</Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -214,7 +248,7 @@ export default function ActiveDonationScreen() {
 
 function Notice() {
   return (
-    <View style={styles.notice}>
+    <View style={styles.notice} accessibilityLiveRegion="polite">
       <Text style={styles.noticeTitle}>Service Not Available</Text>
       <Text style={styles.noticeText}>{DONATION_WORKFLOW_SERVICE_MESSAGE}</Text>
     </View>
@@ -222,26 +256,58 @@ function Notice() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFF5F5' },
-  content: { padding: 24, paddingBottom: 48 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontSize: 26, fontWeight: 'bold', color: '#991B1B' },
-  description: { marginTop: 9, color: '#4B5563', lineHeight: 20 },
-  card: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 18, borderWidth: 1, borderColor: '#FECACA', marginTop: 16 },
-  statusLabel: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  status: { fontSize: 18, fontWeight: 'bold', color: '#991B1B', marginTop: 6 },
-  detail: { color: '#4B5563', marginTop: 9, lineHeight: 20 },
-  feelingTitle: { fontSize: 16, fontWeight: 'bold', color: '#991B1B', marginBottom: 8 },
-  feelingOption: { borderWidth: 1, borderColor: '#FCA5A5', borderRadius: 9, padding: 14, marginTop: 10, minHeight: 48, justifyContent: 'center' },
-  feelingSelected: { backgroundColor: '#DC2626', borderColor: '#DC2626' },
-  feelingText: { color: '#991B1B', fontWeight: '600' },
-  feelingTextSelected: { color: '#FFFFFF' },
-  primaryButton: { marginTop: 18, backgroundColor: '#DC2626', padding: 15, borderRadius: 10, alignItems: 'center', minHeight: 48, justifyContent: 'center' },
-  primaryText: { color: '#FFFFFF', fontWeight: 'bold' },
-  disabled: { opacity: 0.55 },
-  notice: { marginTop: 16, backgroundColor: '#FEF3C7', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#FDE68A' },
-  noticeTitle: { color: '#92400E', fontWeight: 'bold', fontSize: 16 },
-  noticeText: { color: '#92400E', marginTop: 7, lineHeight: 20 },
-  error: { color: '#B91C1C', marginTop: 16, lineHeight: 21 },
-  disclaimer: { marginTop: 20, color: '#6B7280', fontSize: 13, lineHeight: 19 },
+  container: { flex: 1, backgroundColor: DesignColors.background },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Space.lg,
+  },
+  content: {
+    width: '100%', maxWidth: Layout.maxContentWidth, alignSelf: 'center',
+    paddingHorizontal: Space.lg, paddingTop: Space.lg, paddingBottom: Space.xxxl, gap: Space.md,
+  },
+  header: { flexDirection: 'row', alignItems: 'center', gap: Space.md, marginBottom: Space.xs },
+  headerIcon: {
+    width: 48, height: 48, borderRadius: Radii.full, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft, borderWidth: Layout.hairline, borderColor: DesignColors.primaryBorder,
+  },
+  headerText: { flex: 1, gap: Space.xxs },
+  eyebrow: { fontSize: TypeScale.caption, fontWeight: FontWeight.semibold, color: DesignColors.primary, textTransform: 'uppercase' },
+  title: { fontSize: TypeScale.heading, fontWeight: FontWeight.bold, lineHeight: 30, color: DesignColors.text },
+  description: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.textMuted },
+  statusCard: { gap: Space.md },
+  sectionLabel: { fontSize: TypeScale.caption, fontWeight: FontWeight.semibold, letterSpacing: 0.6, color: DesignColors.textMuted },
+  progressTrack: { flexDirection: 'row', gap: Space.xs, marginTop: Space.xs },
+  progressStep: { flex: 1, height: 5, borderRadius: Radii.full, backgroundColor: DesignColors.border },
+  progressStepComplete: { backgroundColor: DesignColors.primary },
+  statusDescription: { fontSize: TypeScale.body, fontWeight: FontWeight.medium, color: DesignColors.textSecondary },
+  actionCard: { gap: Space.md },
+  cardTitle: { fontSize: TypeScale.subtitle, fontWeight: FontWeight.bold, lineHeight: 26, color: DesignColors.text },
+  supportingText: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.textMuted },
+  feelingOption: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Space.md,
+    minHeight: Layout.minTouchTarget, paddingHorizontal: Space.md, paddingVertical: Space.sm,
+    borderWidth: Layout.hairline, borderColor: DesignColors.border, borderRadius: Radii.md, backgroundColor: DesignColors.surface,
+  },
+  feelingSelected: { borderColor: DesignColors.primary, backgroundColor: DesignColors.primarySoft },
+  feelingText: { flex: 1, fontSize: TypeScale.body, fontWeight: FontWeight.medium, color: DesignColors.textSecondary },
+  feelingTextSelected: { fontWeight: FontWeight.semibold, color: DesignColors.primaryDeep },
+  pressed: { opacity: 0.72 },
+  completionCard: { alignItems: 'flex-start', gap: Space.md },
+  completionIcon: {
+    width: 48, height: 48, borderRadius: Radii.full, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: DesignColors.successSurface, borderWidth: Layout.hairline, borderColor: DesignColors.successBorder,
+  },
+  notice: {
+    gap: Space.sm, padding: Space.md, borderRadius: Radii.lg, borderWidth: Layout.hairline,
+    borderColor: DesignColors.warningBorder, backgroundColor: DesignColors.warningSurface,
+  },
+  noticeTitle: { fontSize: TypeScale.body, fontWeight: FontWeight.bold, color: DesignColors.warning },
+  noticeText: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.warning },
+  errorCard: { borderColor: DesignColors.errorBorder, backgroundColor: DesignColors.errorSurface },
+  errorTitle: { fontSize: TypeScale.body, fontWeight: FontWeight.semibold, color: DesignColors.errorText },
+  error: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.errorText },
+  disclaimerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Space.sm, paddingHorizontal: Space.xs, marginTop: Space.xs },
+  disclaimer: { flex: 1, fontSize: TypeScale.caption, lineHeight: 18, color: DesignColors.textMuted },
 });
