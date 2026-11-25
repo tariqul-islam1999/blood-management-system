@@ -245,7 +245,7 @@ export default function AdminVerification() {
     state === 'inactive' ? 'Queue unavailable' : 'Unable to load donors';
 
   return (
-    <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: 'Donor Verification' }} />
       <FlatList
         data={state === 'ready' ? donors : []}

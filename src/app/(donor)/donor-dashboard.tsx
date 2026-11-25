@@ -354,7 +354,7 @@ export default function DonorDashboard() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.center}>
           <ActivityIndicator
             size="large"
@@ -371,7 +371,7 @@ export default function DonorDashboard() {
 
   if (!profile) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.center}>
           <Text style={styles.errorText}>
             Donor information is unavailable.
@@ -399,7 +399,7 @@ export default function DonorDashboard() {
   // ========== DASHBOARD UI ==========
 
   return (
-    <SafeAreaView style={styles.container} edges={['bottom']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <Pressable

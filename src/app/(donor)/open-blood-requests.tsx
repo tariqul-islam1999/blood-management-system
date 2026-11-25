@@ -104,7 +104,7 @@ export default function OpenBloodRequestsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['bottom']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
 
         <View style={styles.header}>

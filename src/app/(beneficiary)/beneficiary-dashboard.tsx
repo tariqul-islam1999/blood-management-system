@@ -15,6 +15,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Href, useFocusEffect, useRouter } from 'expo-router';
 import { supabase } from '../../lib/supabase';
+import { SymbolView } from 'expo-symbols';
+import { AppButton, AppCard, EmptyState } from '../../components/ui';
+import {
+  DesignColors,
+  FontWeight,
+  Layout,
+  Radii,
+  Space,
+  TypeScale,
+} from '../../constants/design-tokens';
+
 
 type BeneficiaryProfile = {
   full_name: string;
@@ -22,6 +33,13 @@ type BeneficiaryProfile = {
   thana: string;
   local_area: string;
 };
+
+/** First letters of up to two words, upper-cased. Returns '' for blank input. */
+function toInitials(value: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  if (words.length === 0) return '';
+  return words.map((word) => word[0]?.toUpperCase() ?? '').join('');
+}
 
 export default function BeneficiaryDashboardScreen() {
   const router = useRouter();
@@ -140,45 +158,42 @@ export default function BeneficiaryDashboardScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#DC2626" />
-        <Text style={styles.loadingText}>
-          Loading your dashboard...
-        </Text>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.center}>
+          <ActivityIndicator
+            size="large"
+            color={DesignColors.primary}
+            accessibilityLabel="Loading your dashboard"
+          />
+          <Text style={styles.centeredText}>Loading your dashboard...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   if (!profile) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.errorText}>
-          Profile could not be loaded.
-        </Text>
-
-        <Pressable
-          style={styles.button}
-          onPress={loadProfile}
-        >
-          <Text style={styles.buttonText}>Try Again</Text>
-        </Pressable>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.center}>
+          <AppCard style={styles.fullWidth}>
+            <EmptyState
+              icon={{ ios: 'exclamationmark.triangle', android: 'error', web: 'error' }}
+              title="Profile could not be loaded."
+              action={<AppButton label="Try Again" variant="primary" onPress={loadProfile} />}
+            />
+          </AppCard>
+        </View>
       </SafeAreaView>
     );
   }
 
+  const initials = toInitials(profile.full_name);
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
-        <Text style={styles.title}>
-          Beneficiary Dashboard
-        </Text>
-
-        <Text style={styles.welcome}>
-          Welcome, {profile.full_name}!
-        </Text>
-
-        <View style={styles.photoSection}>
+        <View style={styles.header}>
           <Pressable
             style={styles.photoWrapper}
             accessibilityRole="button"
@@ -200,101 +215,166 @@ export default function BeneficiaryDashboardScreen() {
               />
             ) : (
               <View style={styles.photoPlaceholder}>
-                <Text style={styles.photoPlaceholderText}>No photo</Text>
+                {initials !== '' ? (
+                  <Text style={styles.photoInitials}>{initials}</Text>
+                ) : (
+                  <SymbolView
+                    name={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
+                    size={44}
+                    tintColor={DesignColors.primary}
+                  />
+                )}
               </View>
             )}
             {isPhotoLoading && (
               <ActivityIndicator
                 style={styles.photoSpinner}
-                color="#DC2626"
+                color={DesignColors.primary}
                 accessibilityLabel="Loading profile photo"
               />
             )}
           </Pressable>
 
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>Beneficiary home</Text>
+            <Text style={styles.title} accessibilityRole="header" numberOfLines={2}>
+              Welcome, {profile.full_name}!
+            </Text>
+            <Text style={styles.subtitle}>Your blood request workspace at a glance.</Text>
+          </View>
+
           <Pressable
-            style={styles.button}
+            style={styles.photoAction}
             accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
             onPress={() => router.push('/upload-profile-photo')}
           >
-            <Text style={styles.buttonText}>Upload / Change Profile Photo</Text>
+            <SymbolView
+              name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }}
+              size={20}
+              tintColor={DesignColors.primary}
+            />
           </Pressable>
+        </View>
 
-          {photoError && (
-            <>
-              <Text style={styles.photoError}>{photoError}</Text>
+        <AppCard style={styles.profileCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionIcon} accessible={false}>
+              <SymbolView
+                name={{ ios: 'person.text.rectangle', android: 'badge', web: 'badge' }}
+                size={19}
+                tintColor={DesignColors.primary}
+              />
+            </View>
+            <Text style={styles.cardTitle}>Your Profile</Text>
+          </View>
+
+          <View style={styles.factRow}>
+            <Text style={styles.factLabel}>District</Text>
+            <Text style={styles.factValue}>{profile.district}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.factRow}>
+            <Text style={styles.factLabel}>Thana</Text>
+            <Text style={styles.factValue}>{profile.thana}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.factRow}>
+            <Text style={styles.factLabel}>Local area</Text>
+            <Text style={styles.factValue}>{profile.local_area}</Text>
+          </View>
+
+          <Text style={styles.hint}>Tap your photo or the camera button to update it.</Text>
+        </AppCard>
+
+        {photoError !== null && (
+          <View style={styles.errorCard} accessibilityLiveRegion="polite">
+            <SymbolView
+              name={{ ios: 'exclamationmark.circle.fill', android: 'error', web: 'error' }}
+              size={18}
+              tintColor={DesignColors.errorText}
+            />
+            <View style={styles.errorBody}>
+              <Text style={styles.errorText}>{photoError}</Text>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="Retry loading your photo"
                 onPress={() => void loadProfile()}
-                style={styles.retryPhotoButton}
+                style={({ pressed }) => [styles.linkButton, pressed && styles.pressed]}
               >
-                <Text style={styles.retryPhotoText}>Retry Photo</Text>
+                <Text style={styles.linkText}>Retry Photo</Text>
               </Pressable>
-            </>
-          )}
+            </View>
+          </View>
+        )}
+
+        <AppCard style={styles.quickActionsCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionIcon} accessible={false}>
+              <SymbolView
+                name={{ ios: 'drop', android: 'water_drop', web: 'water_drop' }}
+                size={19}
+                tintColor={DesignColors.primary}
+              />
+            </View>
+            <Text style={styles.cardTitle}>Blood Requests</Text>
+          </View>
+          <Text style={styles.bodyText}>
+            Create and track your blood requests. This service becomes available after its backend is
+            enabled.
+          </Text>
+          <AppButton
+            label="Create Blood Request"
+            variant="primary"
+            accessibilityLabel="Create a blood request"
+            onPress={() => router.push('/create-blood-request' as Href)}
+          />
+          <AppButton
+            label="My Blood Requests"
+            variant="outline"
+            accessibilityLabel="View my blood requests"
+            onPress={() => router.push('/my-blood-requests' as Href)}
+          />
+        </AppCard>
+
+        <AppCard style={styles.quickActionsCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionIcon} accessible={false}>
+              <SymbolView
+                name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
+                size={19}
+                tintColor={DesignColors.primary}
+              />
+            </View>
+            <Text style={styles.cardTitle}>Find Blood Donors</Text>
+          </View>
+          <Text style={styles.bodyText}>
+            Search for approved and available blood donors by blood group and location.
+          </Text>
+          <Text style={styles.comingSoon}>Donor Search will be added next.</Text>
+          <AppButton
+            label="Find Blood Donors"
+            variant="secondary"
+            accessibilityLabel="Find blood donors"
+            onPress={() => router.push('/find-donors')}
+          />
+        </AppCard>
+
+        <View style={styles.accountSection}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">My Account</Text>
+          <AppButton
+            label="Upload / Change Profile Photo"
+            variant="outline"
+            onPress={() => router.push('/upload-profile-photo')}
+          />
+          <AppButton
+            label="Logout"
+            variant="destructive"
+            onPress={handleLogout}
+          />
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            Your Profile
-          </Text>
-
-          <Text style={styles.detail}>
-            District: {profile.district}
-          </Text>
-
-          <Text style={styles.detail}>
-            Thana: {profile.thana}
-          </Text>
-
-          <Text style={styles.detail}>
-            Local Area: {profile.local_area}
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            Find Blood Donors
-          </Text>
-
-          <Text style={styles.description}>
-            Search for approved and available blood
-            donors by blood group and location.
-          </Text>
-
-          <Text style={styles.comingSoon}>
-            Donor Search will be added next.
-          </Text>
-        </View>
-
-        <Pressable
-  style={styles.button}
-  onPress={() => router.push('/find-donors')}
->
-  <Text style={styles.buttonText}>
-    Find Blood Donors
-  </Text>
-</Pressable>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Blood Requests</Text>
-          <Text style={styles.description}>Create and track your blood requests. This service becomes available after its backend is enabled.</Text>
-          <Pressable style={styles.button} onPress={() => router.push('/create-blood-request' as Href)} accessibilityRole="button">
-            <Text style={styles.buttonText}>Create Blood Request</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryAction} onPress={() => router.push('/my-blood-requests' as Href)} accessibilityRole="button">
-            <Text style={styles.secondaryActionText}>My Blood Requests</Text>
-          </Pressable>
-        </View>
-
-        <Pressable
-          style={styles.logoutButton}
-          onPress={handleLogout}
-        >
-          <Text style={styles.logoutText}>
-            Logout
-          </Text>
-        </Pressable>
+        <Text style={styles.footerText}>Blood Management System</Text>
 
       </ScrollView>
     </SafeAreaView>
@@ -304,52 +384,93 @@ export default function BeneficiaryDashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF5F5',
+    backgroundColor: DesignColors.background,
   },
 
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFF5F5',
-    padding: 24,
+    padding: Space.lg,
+    gap: Space.md,
+  },
+
+  fullWidth: {
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
   },
 
   content: {
-    flexGrow: 1,
-    padding: 24,
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    paddingBottom: Space.xxxl,
+    gap: Space.md,
   },
 
-  photoSection: {
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    gap: Space.md,
+    marginBottom: Space.xs,
+  },
+
+  headerText: {
+    flex: 1,
+    gap: Space.xxs,
+  },
+
+  eyebrow: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.primary,
+    textTransform: 'uppercase',
+  },
+
+  title: {
+    fontSize: TypeScale.heading,
+    fontWeight: FontWeight.bold,
+    lineHeight: 30,
+    color: DesignColors.text,
+  },
+
+  subtitle: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.textMuted,
   },
 
   photoWrapper: {
-    width: 110,
-    height: 110,
+    width: 64,
+    height: 64,
   },
 
   profilePhoto: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 64,
+    height: 64,
+    borderRadius: Radii.full,
     borderWidth: 2,
-    borderColor: '#DC2626',
+    borderColor: DesignColors.primary,
+    backgroundColor: DesignColors.surface,
   },
 
   photoPlaceholder: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
     alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  photoPlaceholderText: {
-    color: '#991B1B',
-    fontSize: 14,
+  photoInitials: {
+    fontSize: TypeScale.subtitle,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.primaryDeep,
   },
 
   photoSpinner: {
@@ -360,119 +481,154 @@ const styles = StyleSheet.create({
     left: 0,
   },
 
-  photoError: {
-    color: '#DC2626',
-    textAlign: 'center',
-    marginTop: 12,
+  photoAction: {
+    width: Layout.minTouchTarget,
+    height: Layout.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
   },
 
-  retryPhotoButton: {
-    padding: 12,
+  profileCard: {
+    gap: Space.sm,
   },
 
-  retryPhotoText: {
-    color: '#991B1B',
-    fontWeight: '600',
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
   },
 
-  loadingText: {
-    marginTop: 12,
-    color: '#6B7280',
-  },
-
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#991B1B',
-    marginBottom: 12,
-  },
-
-  welcome: {
-    fontSize: 18,
-    color: '#374151',
-    marginBottom: 24,
-  },
-
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: '#FEE2E2',
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.primarySoft,
   },
 
   cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#991B1B',
-    marginBottom: 12,
+    flex: 1,
+    fontSize: TypeScale.subtitle,
+    fontWeight: FontWeight.bold,
+    lineHeight: 26,
+    color: DesignColors.text,
   },
 
-  detail: {
-    fontSize: 15,
-    color: '#374151',
-    marginBottom: 8,
+  factRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+    minHeight: 24,
   },
 
-  description: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 21,
+  factLabel: {
+    fontSize: TypeScale.small,
+    color: DesignColors.textMuted,
+  },
+
+  factValue: {
+    flexShrink: 1,
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    textAlign: 'right',
+  },
+
+  divider: {
+    height: Layout.hairline,
+    backgroundColor: DesignColors.border,
+  },
+
+  hint: {
+    fontSize: TypeScale.caption,
+    lineHeight: 18,
+    color: DesignColors.textMuted,
+  },
+
+  quickActionsCard: {
+    gap: Space.md,
+  },
+
+  bodyText: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.textSecondary,
   },
 
   comingSoon: {
-    fontSize: 13,
-    color: '#DC2626',
-    marginTop: 12,
-    fontWeight: '600',
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.textMuted,
   },
 
-  button: {
-    backgroundColor: '#DC2626',
-    padding: 14,
-    borderRadius: 10,
-    marginTop: 15,
+  accountSection: {
+    gap: Space.md,
+    marginTop: Space.sm,
   },
 
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+  sectionTitle: {
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    lineHeight: 28,
+    color: DesignColors.text,
   },
 
-  secondaryAction: {
-    borderWidth: 1,
-    borderColor: '#DC2626',
-    padding: 14,
-    borderRadius: 10,
-    marginTop: 10,
-    alignItems: 'center',
+  footerText: {
+    marginTop: Space.lg,
+    textAlign: 'center',
+    fontSize: TypeScale.caption,
+    color: DesignColors.textMuted,
   },
 
-  secondaryActionText: {
-    color: '#DC2626',
-    fontWeight: 'bold',
+  centeredText: {
+    fontSize: TypeScale.body,
+    color: DesignColors.textMuted,
+    textAlign: 'center',
   },
 
-  logoutButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DC2626',
-    padding: 15,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 12,
+  pressed: {
+    opacity: 0.65,
   },
 
-  logoutText: {
-    color: '#DC2626',
-    fontWeight: 'bold',
-    fontSize: 16,
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Space.sm,
+    padding: Space.md,
+    borderRadius: Radii.lg,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.errorBorder,
+    backgroundColor: DesignColors.errorSurface,
+  },
+
+  errorBody: {
+    flex: 1,
+    gap: Space.xs,
   },
 
   errorText: {
-    color: '#DC2626',
-    fontSize: 15,
-    textAlign: 'center',
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.errorText,
+  },
+
+  linkButton: {
+    alignSelf: 'flex-start',
+    minHeight: Layout.minTouchTarget,
+    justifyContent: 'center',
+  },
+
+  linkText: {
+    fontSize: TypeScale.small,
+    fontWeight: FontWeight.bold,
+    color: DesignColors.errorText,
+    textDecorationLine: 'underline',
   },
 });

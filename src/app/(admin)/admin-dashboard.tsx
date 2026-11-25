@@ -209,7 +209,7 @@ export default function AdminDashboard() {
 
 
   return (
-    <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: 'Admin' }} />
 
       {state === 'loading' ? (

@@ -7,14 +7,23 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
   Alert,
   Keyboard,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { supabase } from '../../lib/supabase';
+import { AppButton, AppCard, EmptyState } from '../../components/ui';
+import {
+  DesignColors,
+  FontWeight,
+  Layout,
+  Radii,
+  Space,
+  TypeScale,
+} from '../../constants/design-tokens';
 
 type DonorResult = {
   donor_id: string;
@@ -123,125 +132,127 @@ export default function FindDonorsScreen() {
     value?.trim() || 'Not provided';
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
         <Pressable
           onPress={() => router.back()}
-          style={styles.backButton}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text style={styles.backText}>
-            ← Back
-          </Text>
+          <Text style={styles.backText}>{'\u2190'} Back</Text>
         </Pressable>
 
-        <Text style={styles.title}>
-          Find Blood Donors
-        </Text>
-
-        <Text style={styles.subtitle}>
-          Search approved and currently available donors
-          by blood group and location.
-        </Text>
-
-        <Text style={styles.label}>
-          Blood Group *
-        </Text>
-
-        <View style={styles.bloodGroupContainer}>
-          {BLOOD_GROUPS.map((group) => (
-            <Pressable
-              key={group}
-              disabled={isSearching}
-              onPress={() => setBloodGroup(group)}
-              style={[
-                styles.groupButton,
-                bloodGroup === group &&
-                  styles.selectedGroupButton,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.groupText,
-                  bloodGroup === group &&
-                    styles.selectedGroupText,
-                ]}
-              >
-                {group}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={styles.header}>
+          <View style={styles.headerIcon} accessible={false}>
+            <SymbolView
+              name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
+              size={23}
+              tintColor={DesignColors.primary}
+            />
+          </View>
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>Find donors</Text>
+            <Text style={styles.title} accessibilityRole="header">
+              Find Blood Donors
+            </Text>
+            <Text style={styles.subtitle}>
+              Search approved and currently available donors by blood group and location.
+            </Text>
+          </View>
         </View>
 
-        <Text style={styles.label}>
-          District *
-        </Text>
+        <AppCard style={styles.formCard}>
+          <Text style={styles.sectionLabel}>SEARCH CRITERIA</Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Dhaka"
-          value={district}
-          editable={!isSearching}
-          autoCapitalize="words"
-          onChangeText={setDistrict}
-        />
+          <Text style={styles.label}>Blood Group *</Text>
+          <View style={styles.bloodGroupContainer}>
+            {BLOOD_GROUPS.map((group) => {
+              const selected = bloodGroup === group;
+              return (
+                <Pressable
+                  key={group}
+                  disabled={isSearching}
+                  onPress={() => setBloodGroup(group)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select blood group ${group}`}
+                  accessibilityState={{ selected, disabled: isSearching }}
+                  style={({ pressed }) => [
+                    styles.groupButton,
+                    selected && styles.selectedGroupButton,
+                    pressed && !isSearching && styles.pressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.groupText,
+                      selected && styles.selectedGroupText,
+                    ]}
+                  >
+                    {group}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <Text style={styles.label}>
-          Thana / Upazila (Optional)
-        </Text>
+          <Text style={styles.label}>District *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Dhaka"
+            placeholderTextColor={DesignColors.textMuted}
+            value={district}
+            editable={!isSearching}
+            autoCapitalize="words"
+            onChangeText={setDistrict}
+            accessibilityLabel="District"
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Mirpur"
-          value={thana}
-          editable={!isSearching}
-          autoCapitalize="words"
-          onChangeText={setThana}
-        />
+          <Text style={styles.label}>Thana / Upazila (Optional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Mirpur"
+            placeholderTextColor={DesignColors.textMuted}
+            value={thana}
+            editable={!isSearching}
+            autoCapitalize="words"
+            onChangeText={setThana}
+            accessibilityLabel="Thana or upazila, optional"
+          />
 
-        <Pressable
-          style={[
-            styles.searchButton,
-            isSearching && styles.disabledButton,
-          ]}
-          onPress={handleSearch}
-          disabled={isSearching}
-        >
-          {isSearching ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.searchButtonText}>
-              Search Donors
-            </Text>
-          )}
-        </Pressable>
+          <AppButton
+            label="Search Donors"
+            variant="primary"
+            loading={isSearching}
+            disabled={isSearching}
+            accessibilityLabel="Search for blood donors"
+            onPress={() => void handleSearch()}
+            style={styles.searchButton}
+          />
+        </AppCard>
 
         {hasSearched && (
           <View style={styles.resultsSection}>
-            <Text style={styles.resultsTitle}>
+            <Text style={styles.resultsTitle} accessibilityRole="header">
               Search Results ({donors.length})
             </Text>
 
             {donors.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>
-                  No Matching Donors Found
-                </Text>
-                <Text style={styles.emptyText}>
-                  No approved and available donors matched
-                  your search. Try another location.
-                </Text>
-              </View>
+              <AppCard>
+                <EmptyState
+                  icon={{ ios: 'tray', android: 'inbox', web: 'inbox' }}
+                  title="No Matching Donors Found"
+                  description="No approved and available donors matched your search. Try another location."
+                />
+              </AppCard>
             ) : (
               donors.map((donor) => (
-                <View
-                  key={donor.donor_id}
-                  style={styles.donorCard}
-                >
+                <AppCard key={donor.donor_id} style={styles.donorCard}>
                   <View style={styles.cardHeader}>
-                    <Text style={styles.donorName}>
+                    <Text style={styles.donorName} numberOfLines={2}>
                       {donor.full_name}
                     </Text>
 
@@ -252,22 +263,32 @@ export default function FindDonorsScreen() {
                     </View>
                   </View>
 
-                  <Text style={styles.locationText}>
-                    District: {displayValue(donor.district)}
-                  </Text>
+                  <View style={styles.factList}>
+                    <View style={styles.factRow}>
+                      <Text style={styles.factLabel}>District</Text>
+                      <Text style={styles.factValue} numberOfLines={2}>
+                        {displayValue(donor.district)}
+                      </Text>
+                    </View>
+                    <View style={styles.factRow}>
+                      <Text style={styles.factLabel}>Thana</Text>
+                      <Text style={styles.factValue} numberOfLines={2}>
+                        {displayValue(donor.thana)}
+                      </Text>
+                    </View>
+                    <View style={styles.factRow}>
+                      <Text style={styles.factLabel}>Local area</Text>
+                      <Text style={styles.factValue} numberOfLines={2}>
+                        {displayValue(donor.local_area)}
+                      </Text>
+                    </View>
+                  </View>
 
-                  <Text style={styles.locationText}>
-                    Thana: {displayValue(donor.thana)}
-                  </Text>
-
-                  <Text style={styles.locationText}>
-                    Area: {displayValue(donor.local_area)}
-                  </Text>
-
-                  <Text style={styles.availableText}>
-                    ● Available
-                  </Text>
-                </View>
+                  <View style={styles.availableRow}>
+                    <View style={styles.availableDot} accessible={false} />
+                    <Text style={styles.availableText}>Available</Text>
+                  </View>
+                </AppCard>
               ))
             )}
           </View>
@@ -291,165 +312,216 @@ export default function FindDonorsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF5F5',
+    backgroundColor: DesignColors.background,
   },
   content: {
-    padding: 24,
-    paddingBottom: 50,
+    width: '100%',
+    maxWidth: Layout.maxContentWidth,
+    alignSelf: 'center',
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    paddingBottom: Space.xxxl,
+    gap: Space.md,
   },
   backButton: {
-    marginBottom: 16,
     alignSelf: 'flex-start',
+    minHeight: Layout.minTouchTarget,
+    justifyContent: 'center',
+    paddingRight: Space.md,
   },
   backText: {
-    color: '#DC2626',
-    fontSize: 15,
-    fontWeight: '600',
+    color: DesignColors.primary,
+    fontSize: TypeScale.small,
+    fontWeight: FontWeight.semibold,
+  },
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    marginBottom: Space.xs,
+  },
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+  },
+  headerText: {
+    flex: 1,
+    gap: Space.xxs,
+  },
+  eyebrow: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.primary,
+    textTransform: 'uppercase',
   },
   title: {
-    fontSize: 27,
-    fontWeight: 'bold',
-    color: '#991B1B',
-    marginBottom: 10,
+    fontSize: TypeScale.heading,
+    fontWeight: FontWeight.bold,
+    lineHeight: 30,
+    color: DesignColors.text,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 21,
-    marginBottom: 25,
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    color: DesignColors.textMuted,
+  },
+
+  formCard: {
+    gap: Space.sm,
+  },
+  sectionLabel: {
+    fontSize: TypeScale.caption,
+    fontWeight: FontWeight.semibold,
+    letterSpacing: 0.6,
+    color: DesignColors.textMuted,
   },
   label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 9,
-    marginTop: 15,
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    marginTop: Space.xs,
   },
+
   bloodGroupContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
+    gap: Space.sm,
   },
   groupButton: {
-    width: '22%',
-    paddingVertical: 13,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    minWidth: 64,
+    minHeight: Layout.minTouchTarget,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+    backgroundColor: DesignColors.surface,
+    borderRadius: Radii.md,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   selectedGroupButton: {
-    backgroundColor: '#DC2626',
-    borderColor: '#DC2626',
+    backgroundColor: DesignColors.primarySoft,
+    borderColor: DesignColors.primary,
   },
   groupText: {
-    color: '#374151',
-    fontSize: 15,
-    fontWeight: 'bold',
+    color: DesignColors.textSecondary,
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
   },
   selectedGroupText: {
-    color: '#FFFFFF',
+    color: DesignColors.primaryDeep,
+    fontWeight: FontWeight.bold,
   },
+  pressed: {
+    opacity: 0.72,
+  },
+
   input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 15,
-    color: '#111827',
+    minHeight: Layout.inputHeight,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.md,
+    backgroundColor: DesignColors.surface,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.border,
+    borderRadius: Radii.md,
+    fontSize: TypeScale.bodyLarge,
+    color: DesignColors.text,
   },
   searchButton: {
-    backgroundColor: '#DC2626',
-    padding: 17,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 28,
+    marginTop: Space.sm,
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  searchButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+
   resultsSection: {
-    marginTop: 32,
+    marginTop: Space.sm,
+    gap: Space.md,
   },
   resultsTitle: {
-    fontSize: 19,
-    fontWeight: 'bold',
-    color: '#991B1B',
-    marginBottom: 15,
+    fontSize: TypeScale.title,
+    fontWeight: FontWeight.bold,
+    lineHeight: 28,
+    color: DesignColors.text,
   },
+
   donorCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 18,
-    borderRadius: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#FECACA',
+    gap: Space.md,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: 12,
-    gap: 10,
+    gap: Space.sm,
   },
   donorName: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#374151',
     flex: 1,
+    fontSize: TypeScale.bodyLarge,
+    fontWeight: FontWeight.bold,
+    lineHeight: 22,
+    color: DesignColors.text,
   },
   bloodBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 9,
+    backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline,
+    borderColor: DesignColors.primaryBorder,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs,
+    borderRadius: Radii.md,
   },
   bloodBadgeText: {
-    color: '#991B1B',
-    fontWeight: 'bold',
-    fontSize: 16,
+    color: DesignColors.primaryDeep,
+    fontWeight: FontWeight.bold,
+    fontSize: TypeScale.small,
   },
-  locationText: {
-    color: '#4B5563',
-    fontSize: 14,
-    marginBottom: 6,
+
+  factList: {
+    gap: Space.sm,
+  },
+  factRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: Space.sm,
+  },
+  factLabel: {
+    fontSize: TypeScale.small,
+    color: DesignColors.textMuted,
+  },
+  factValue: {
+    flexShrink: 1,
+    fontSize: TypeScale.body,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.text,
+    textAlign: 'right',
+  },
+
+  availableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.xs,
+  },
+  availableDot: {
+    width: 8,
+    height: 8,
+    borderRadius: Radii.full,
+    backgroundColor: DesignColors.success,
   },
   availableText: {
-    color: '#15803D',
-    fontWeight: '600',
-    marginTop: 8,
+    fontSize: TypeScale.small,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.successText,
   },
-  emptyCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  emptyTitle: {
-    color: '#374151',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 9,
-  },
-  emptyText: {
-    color: '#6B7280',
-    fontSize: 14,
-    lineHeight: 21,
-  },
+
   privacyNote: {
-    color: '#6B7280',
-    fontSize: 12,
+    marginTop: Space.sm,
+    color: DesignColors.textMuted,
+    fontSize: TypeScale.caption,
     lineHeight: 19,
     textAlign: 'center',
-    marginTop: 25,
   },
 });

@@ -15,6 +15,9 @@ import {
 } from '../../lib/admin-management';
 import { AppButton, AppCard, EmptyState, StatusBadge } from '../../components/ui';
 import {
+  AdminCreationError, AdminCreationInput, superAdminCreateAdmin, validateAdminCreationInput,
+} from '../../lib/admin-creation';
+import {
   DesignColors, FontWeight, Layout, Radii, Space, TypeScale,
 } from '../../constants/design-tokens';
 
@@ -62,6 +65,15 @@ export default function SuperAdminDashboard() {
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
+  // Admin-creation form. Every field starts empty; nothing is prefilled and no
+  // placeholder identity is ever submitted.
+  const [newAdmin, setNewAdmin] = useState<AdminCreationInput>({
+    full_name: '', email: '', password: '', phone: '',
+    district: '', thana: '', local_area: '', reason: '',
+  });
+  const [creationErrors, setCreationErrors] = useState<Record<string, string>>({});
+  const [creationMessage, setCreationMessage] = useState('');
+  const [creationSucceeded, setCreationSucceeded] = useState('');
   const focused = useRef(false);
   const generation = useRef(0);
   const busy = useRef(false);
@@ -76,6 +88,15 @@ export default function SuperAdminDashboard() {
     setFormError('');
     setHasNext(false);
     setWorking(false);
+    // The new-Admin form holds a password and personal details, so it is
+    // cleared on sign-out, on focus loss and on any authorization failure.
+    setNewAdmin({
+      full_name: '', email: '', password: '', phone: '',
+      district: '', thana: '', local_area: '', reason: '',
+    });
+    setCreationErrors({});
+    setCreationMessage('');
+    setCreationSucceeded('');
     busy.current = false;
     caller.current = null;
   }, []);
@@ -236,6 +257,84 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const updateNewAdmin = (field: keyof AdminCreationInput, value: string) => {
+    setNewAdmin((current) => ({ ...current, [field]: value }));
+    setCreationErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setCreationMessage('');
+    setCreationSucceeded('');
+  };
+
+  const resetNewAdmin = () => {
+    setNewAdmin({
+      full_name: '', email: '', password: '', phone: '',
+      district: '', thana: '', local_area: '', reason: '',
+    });
+    setCreationErrors({});
+    setCreationMessage('');
+  };
+
+  const submitNewAdmin = async () => {
+    // Independent UI and service gates: no request is made while the feature is
+    // disabled, the screen is not ready, or a request is already in flight.
+    if (!ADMIN_MANAGEMENT_ACTIVE || !available || busy.current) return;
+
+    const fieldErrors = validateAdminCreationInput(newAdmin);
+    if (Object.keys(fieldErrors).length > 0) {
+      setCreationErrors(fieldErrors);
+      setCreationMessage('');
+      setCreationSucceeded('');
+      return;
+    }
+
+    busy.current = true;
+    setWorking(true);
+    setCreationErrors({});
+    setCreationMessage('');
+    setCreationSucceeded('');
+    const request = generation.current;
+    const current = () => focused.current && request === generation.current;
+    try {
+      const userId = await verifySuperAdminAccess();
+      if (!current()) return;
+      if (userId !== caller.current) {
+        throw new AdminCreationError('expired', 'Your account changed. Please log in again.');
+      }
+      const result = await superAdminCreateAdmin(newAdmin);
+      if (!current()) return;
+      setCreationSucceeded(
+        result.result === 'already_created'
+          ? `This Admin account already exists (${result.target_user_id}). The admin list has been refreshed.`
+          : `Admin account created (${result.target_user_id}).`,
+      );
+      resetNewAdmin();
+      // Refresh authoritative data so the new Admin appears in the list.
+      await load();
+    } catch (error) {
+      if (!current()) return;
+      const failure = error instanceof AdminCreationError ? error
+        : new AdminCreationError('request', 'Unable to create the Admin account. Check your connection and retry.');
+      if (['expired', 'unauthorized', 'inactive'].includes(failure.code)) {
+        ++generation.current;
+        clearPrivateData();
+        setAuthorized(false);
+        setState(failure.code === 'expired' || failure.code === 'unauthorized'
+          ? failure.code : 'inactive');
+        setMessage(failure.message);
+      } else {
+        // Keep the form values so the Super Admin can correct and resubmit, but
+        // never imply the request succeeded.
+        setCreationMessage(failure.message);
+      }
+    } finally {
+      if (current()) { busy.current = false; setWorking(false); }
+    }
+  };
+
   const closeConfirmation = () => {
     if (busy.current) return;
     setConfirmation(null);
@@ -279,7 +378,7 @@ export default function SuperAdminDashboard() {
   };
 
   return (
-    <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
       <Stack.Screen options={{ title: 'Super Admin' }} />
       <FlatList
         data={authorized && state === 'ready' ? admins : []}
@@ -335,6 +434,123 @@ export default function SuperAdminDashboard() {
                   is separately deployed and verified. No admin changes can be submitted.
                 </Text>
               </View>
+            )}
+
+            {authorized && (
+              <AppCard>
+                <View style={styles.cardHeadingRow}>
+                  <SymbolView
+                    name={{ ios: 'person.crop.circle.badge.plus', android: 'person', web: 'person' }}
+                    size={20}
+                    tintColor={DesignColors.primary}
+                  />
+                  <Text style={styles.heading} accessibilityRole="header">Create Admin Account</Text>
+                </View>
+                <Text style={styles.text}>
+                  Creates a new account with the Admin role. Confirm the email address with the
+                  person directly before submitting: this app does not send an invitation, and the
+                  address is not verified by email. Give the password to them in person, never by
+                  message or email.
+                </Text>
+
+                <Text style={styles.label}>Full name *</Text>
+                <TextInput accessibilityLabel="Admin full name" style={styles.input}
+                  placeholder="Full name" placeholderTextColor={DesignColors.textMuted}
+                  value={newAdmin.full_name} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('full_name', value)} />
+                {!!creationErrors.full_name && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.full_name}</Text>
+                )}
+
+                <Text style={styles.label}>Email *</Text>
+                <TextInput accessibilityLabel="Admin email address" style={styles.input}
+                  placeholder="name@example.com" placeholderTextColor={DesignColors.textMuted}
+                  autoCapitalize="none" autoCorrect={false} keyboardType="email-address"
+                  value={newAdmin.email} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('email', value)} />
+                {!!creationErrors.email && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.email}</Text>
+                )}
+
+                <Text style={styles.label}>Temporary password *</Text>
+                <TextInput accessibilityLabel="Temporary password, at least 8 characters" style={styles.input}
+                  placeholder="At least 8 characters" placeholderTextColor={DesignColors.textMuted}
+                  secureTextEntry autoCapitalize="none" autoCorrect={false}
+                  value={newAdmin.password} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('password', value)} />
+                {!!creationErrors.password && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.password}</Text>
+                )}
+
+                <Text style={styles.label}>Mobile number *</Text>
+                <TextInput accessibilityLabel="Admin mobile number" style={styles.input}
+                  placeholder="01XXXXXXXXX" placeholderTextColor={DesignColors.textMuted}
+                  keyboardType="phone-pad" value={newAdmin.phone} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('phone', value)} />
+                {!!creationErrors.phone && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.phone}</Text>
+                )}
+
+                <Text style={styles.label}>District *</Text>
+                <TextInput accessibilityLabel="Admin district" style={styles.input}
+                  placeholder="District" placeholderTextColor={DesignColors.textMuted}
+                  value={newAdmin.district} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('district', value)} />
+                {!!creationErrors.district && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.district}</Text>
+                )}
+
+                <Text style={styles.label}>Thana / Upazila *</Text>
+                <TextInput accessibilityLabel="Admin thana or upazila" style={styles.input}
+                  placeholder="Thana / Upazila" placeholderTextColor={DesignColors.textMuted}
+                  value={newAdmin.thana} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('thana', value)} />
+                {!!creationErrors.thana && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.thana}</Text>
+                )}
+
+                <Text style={styles.label}>Local area *</Text>
+                <TextInput accessibilityLabel="Admin local area" style={styles.input}
+                  placeholder="Local area" placeholderTextColor={DesignColors.textMuted}
+                  value={newAdmin.local_area} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('local_area', value)} />
+                {!!creationErrors.local_area && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.local_area}</Text>
+                )}
+
+                <Text style={styles.label}>Reason (required)</Text>
+                <Text style={styles.helperText}>
+                  Use 10-500 characters. Keep it brief; avoid medical details, contact information
+                  and secrets.
+                </Text>
+                <TextInput accessibilityLabel="Reason for creating this admin account, required"
+                  multiline textAlignVertical="top" style={styles.reasonInput}
+                  placeholder="Reason for creating this admin" placeholderTextColor={DesignColors.textMuted}
+                  value={newAdmin.reason} editable={!working}
+                  onChangeText={(value) => updateNewAdmin('reason', value)} />
+                <Text style={styles.helperText}>{Array.from(newAdmin.reason.trim()).length}/500 characters</Text>
+                {!!creationErrors.reason && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationErrors.reason}</Text>
+                )}
+
+                {!!creationMessage && (
+                  <Text accessibilityLiveRegion="polite" style={styles.error}>{creationMessage}</Text>
+                )}
+                {!!creationSucceeded && (
+                  <Text accessibilityLiveRegion="polite" style={styles.success}>{creationSucceeded}</Text>
+                )}
+                {working && (
+                  <ActivityIndicator color={DesignColors.primary} accessibilityLabel="Creating admin account" />
+                )}
+
+                <AppButton
+                  label={working ? 'Creating...' : 'Create Admin Account'}
+                  variant="primary"
+                  loading={working}
+                  disabled={!available}
+                  onPress={() => void submitNewAdmin()}
+                />
+              </AppCard>
             )}
 
             {authorized && (
@@ -609,10 +825,10 @@ const styles = StyleSheet.create({
     maxWidth: Layout.maxContentWidth,
     alignSelf: 'center',
     paddingHorizontal: Space.lg,
-    // Base gutter (Space.lg) plus a deliberate 16pt lift so the header does not
-    // sit flush under the status bar area. The SafeAreaView deliberately omits
-    // the 'top' edge, so this value is the only top spacing applied here.
-    paddingTop: Space.xxxl,
+    // The SafeAreaView now supplies the device top inset ('top' edge), so this
+    // is a plain content gutter. The previous Space.xxxl value was a manual
+    // stand-in for the omitted inset and is no longer needed.
+    paddingTop: Space.lg,
     paddingBottom: Space.xxxl,
     gap: Space.md,
   },
@@ -721,6 +937,12 @@ const styles = StyleSheet.create({
     fontSize: TypeScale.small,
     lineHeight: 20,
     color: DesignColors.errorText,
+  },
+  success: {
+    fontSize: TypeScale.small,
+    lineHeight: 20,
+    fontWeight: FontWeight.semibold,
+    color: DesignColors.successText,
   },
   monoText: {
     fontSize: TypeScale.caption,

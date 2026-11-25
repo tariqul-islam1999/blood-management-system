@@ -1,7 +1,18 @@
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+
+import { AppButton, AppCard, EmptyState, StatusBadge } from '../../components/ui';
+import {
+  DesignColors,
+  FontWeight,
+  Layout,
+  Radii,
+  Space,
+  TypeScale,
+} from '../../constants/design-tokens';
 
 import {
   BLOOD_REQUEST_SERVICE_ACTIVE,
@@ -53,19 +64,210 @@ export default function MyBloodRequestsScreen() {
     } finally { setCancellingId(null); }
   };
 
-  return <SafeAreaView style={styles.container} edges={['bottom']}><ScrollView contentContainerStyle={styles.content}>
-    <Text style={styles.title}>My Blood Requests</Text>
-    {!BLOOD_REQUEST_SERVICE_ACTIVE ? <Notice /> : isLoading ? <Loading /> : error ? <Retry message={error} onRetry={() => void load()} /> : activeRequests.length === 0 ? <Empty onRetry={() => void load()} /> : activeRequests.map((request) => <View key={request.request_id} style={styles.card}>
-      <View style={styles.cardHeader}><Text style={styles.bloodGroup}>{request.blood_group}</Text><Text style={[styles.status, request.status === 'open' ? styles.open : styles.cancelled]}>{request.status.toUpperCase()}</Text></View>
-      <Text style={styles.detail}>{request.units_requested} unit{request.units_requested === 1 ? '' : 's'} · {request.urgency === 'urgent' ? 'Urgent' : 'Routine'}</Text>
-      <Text style={styles.detail}>Needed by: {request.needed_by}</Text><Text style={styles.detail}>Location: {request.local_area}, {request.thana}, {request.district}</Text>
-      <Text style={styles.count}>{request.interest_count} donor interest{request.interest_count === 1 ? '' : 's'}</Text>
-      {request.status === 'open' && <Pressable style={[styles.cancelButton, cancellingId === request.request_id && styles.disabled]} disabled={cancellingId !== null} onPress={() => cancel(request)} accessibilityRole="button"><Text style={styles.cancelText}>{cancellingId === request.request_id ? 'Cancelling...' : 'Cancel Request'}</Text></Pressable>}
-    </View>)}
-  </ScrollView></SafeAreaView>;
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <ScrollView contentContainerStyle={styles.content}>
+
+        <View style={styles.header}>
+          <View style={styles.headerIcon} accessible={false}>
+            <SymbolView
+              name={{ ios: 'list.bullet.rectangle', android: 'receipt_long', web: 'receipt_long' }}
+              size={23}
+              tintColor={DesignColors.primary}
+            />
+          </View>
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>Blood requests</Text>
+            <Text style={styles.title} accessibilityRole="header">My Blood Requests</Text>
+            <Text style={styles.description}>
+              Active requests you created. Cancelled requests leave this list.
+            </Text>
+          </View>
+        </View>
+
+        {!BLOOD_REQUEST_SERVICE_ACTIVE ? (
+          <Notice />
+        ) : isLoading ? (
+          <Loading />
+        ) : error ? (
+          <AppCard>
+            <EmptyState
+              icon={{ ios: 'exclamationmark.triangle', android: 'error', web: 'error' }}
+              title="Unable to load requests"
+              description={error}
+              action={<AppButton label="Try Again" variant="primary" onPress={() => void load()} />}
+            />
+          </AppCard>
+        ) : activeRequests.length === 0 ? (
+          <AppCard>
+            <EmptyState
+              icon={{ ios: 'tray', android: 'inbox', web: 'inbox' }}
+              title="No Requests"
+              description="Active requests you create will appear here."
+              action={<AppButton label="Refresh" variant="primary" onPress={() => void load()} />}
+            />
+          </AppCard>
+        ) : (
+          activeRequests.map((request) => {
+            const isCancelling = cancellingId === request.request_id;
+            return (
+              <AppCard key={request.request_id} style={styles.requestCard}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.bloodGroupPill}>
+                    <Text style={styles.bloodGroup}>{request.blood_group}</Text>
+                  </View>
+                  <View style={styles.statusColumn}>
+                    <StatusBadge
+                      status={request.status}
+                      label={request.status === 'open' ? 'Open' : 'Cancelled'}
+                    />
+                    <View style={styles.urgencyRow}>
+                      <SymbolView
+                        name={
+                          request.urgency === 'urgent'
+                            ? { ios: 'exclamationmark.triangle.fill', android: 'warning', web: 'warning' }
+                            : { ios: 'clock', android: 'schedule', web: 'schedule' }
+                        }
+                        size={14}
+                        tintColor={
+                          request.urgency === 'urgent' ? DesignColors.errorText : DesignColors.textMuted
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.urgencyText,
+                          request.urgency === 'urgent' && styles.urgencyTextUrgent,
+                        ]}
+                      >
+                        {request.urgency === 'urgent' ? 'Urgent' : 'Routine'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.factList}>
+                  <View style={styles.factRow}>
+                    <Text style={styles.factLabel}>Units</Text>
+                    <Text style={styles.factValue}>
+                      {request.units_requested} unit{request.units_requested === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                  <View style={styles.factRow}>
+                    <Text style={styles.factLabel}>Needed by</Text>
+                    <Text style={styles.factValue}>{request.needed_by}</Text>
+                  </View>
+                  <View style={styles.factRow}>
+                    <Text style={styles.factLabel}>Location</Text>
+                    <Text style={styles.factValue} numberOfLines={2}>
+                      {request.local_area}, {request.thana}, {request.district}
+                    </Text>
+                  </View>
+                  <View style={styles.factRow}>
+                    <Text style={styles.factLabel}>Donor interest</Text>
+                    <Text style={styles.factValue}>
+                      {request.interest_count} donor interest
+                      {request.interest_count === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                </View>
+
+                {request.status === 'open' && (
+                  <AppButton
+                    label={isCancelling ? 'Cancelling...' : 'Cancel Request'}
+                    variant="destructive"
+                    loading={isCancelling}
+                    disabled={cancellingId !== null}
+                    accessibilityLabel={isCancelling ? 'Cancelling this request' : 'Cancel this blood request'}
+                    onPress={() => cancel(request)}
+                  />
+                )}
+              </AppCard>
+            );
+          })
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
-function Notice() { return <View style={styles.notice}><Text style={styles.noticeTitle}>Service Not Available</Text><Text style={styles.noticeText}>{BLOOD_REQUEST_SERVICE_MESSAGE}</Text></View>; }
-function Loading() { return <View style={styles.center}><ActivityIndicator size="large" color="#DC2626" /><Text style={styles.detail}>Loading your requests...</Text></View>; }
-function Retry({ message, onRetry }: { message: string; onRetry: () => void }) { return <View style={styles.center}><Text style={styles.error}>{message}</Text><Pressable style={styles.retry} onPress={onRetry}><Text style={styles.retryText}>Try Again</Text></Pressable></View>; }
-function Empty({ onRetry }: { onRetry: () => void }) { return <View style={styles.center}><Text style={styles.emptyTitle}>No Requests</Text><Text style={styles.detail}>Active requests you create will appear here.</Text><Pressable style={styles.retry} onPress={onRetry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
-const styles = StyleSheet.create({ container:{flex:1,backgroundColor:'#FFF5F5'},content:{padding:24,paddingBottom:48},title:{fontSize:26,fontWeight:'bold',color:'#991B1B',marginBottom:18},center:{alignItems:'center',padding:28},card:{backgroundColor:'#FFFFFF',borderRadius:12,padding:18,borderWidth:1,borderColor:'#FECACA',marginBottom:14},cardHeader:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},bloodGroup:{fontSize:28,fontWeight:'bold',color:'#DC2626'},status:{fontWeight:'bold',fontSize:12},open:{color:'#15803D'},cancelled:{color:'#6B7280'},detail:{color:'#4B5563',marginTop:9,lineHeight:20},count:{color:'#991B1B',fontWeight:'700',marginTop:14},cancelButton:{marginTop:16,borderWidth:1,borderColor:'#DC2626',borderRadius:9,padding:12,alignItems:'center'},cancelText:{color:'#B91C1C',fontWeight:'bold'},disabled:{opacity:.55},notice:{backgroundColor:'#FEF3C7',padding:16,borderRadius:12,borderWidth:1,borderColor:'#FDE68A'},noticeTitle:{color:'#92400E',fontWeight:'bold',fontSize:16},noticeText:{color:'#92400E',marginTop:7,lineHeight:20},error:{color:'#B91C1C',textAlign:'center',lineHeight:21},retry:{marginTop:16,backgroundColor:'#DC2626',paddingHorizontal:18,paddingVertical:12,borderRadius:9},retryText:{color:'#FFFFFF',fontWeight:'bold'},emptyTitle:{fontSize:18,fontWeight:'bold',color:'#991B1B'} });
+
+function Notice() {
+  return (
+    <View style={styles.notice} accessibilityLiveRegion="polite">
+      <Text style={styles.noticeTitle}>Service Not Available</Text>
+      <Text style={styles.noticeText}>{BLOOD_REQUEST_SERVICE_MESSAGE}</Text>
+    </View>
+  );
+}
+
+function Loading() {
+  return (
+    <View style={styles.loadingCard}>
+      <ActivityIndicator
+        size="large"
+        color={DesignColors.primary}
+        accessibilityLabel="Loading your blood requests"
+      />
+      <Text style={styles.mutedText}>Loading your requests...</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: DesignColors.background },
+  content: {
+    width: '100%', maxWidth: Layout.maxContentWidth, alignSelf: 'center',
+    paddingHorizontal: Space.lg, paddingTop: Space.lg, paddingBottom: Space.xxxl, gap: Space.md,
+  },
+
+  header: { flexDirection: 'row', alignItems: 'center', gap: Space.md, marginBottom: Space.xs },
+  headerIcon: {
+    width: 48, height: 48, borderRadius: Radii.full, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: DesignColors.primarySoft, borderWidth: Layout.hairline, borderColor: DesignColors.primaryBorder,
+  },
+  headerText: { flex: 1, gap: Space.xxs },
+  eyebrow: {
+    fontSize: TypeScale.caption, fontWeight: FontWeight.semibold, color: DesignColors.primary,
+    textTransform: 'uppercase',
+  },
+  title: { fontSize: TypeScale.heading, fontWeight: FontWeight.bold, lineHeight: 30, color: DesignColors.text },
+  description: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.textMuted },
+
+  loadingCard: {
+    alignItems: 'center', justifyContent: 'center', gap: Space.md, padding: Space.xxxl,
+    backgroundColor: DesignColors.surface, borderRadius: Radii.lg,
+    borderWidth: Layout.hairline, borderColor: DesignColors.border,
+  },
+  mutedText: { fontSize: TypeScale.body, color: DesignColors.textMuted },
+
+  requestCard: { gap: Space.md },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Space.sm },
+  bloodGroupPill: {
+    minWidth: 68, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: Space.sm, paddingHorizontal: Space.md,
+    borderRadius: Radii.md, backgroundColor: DesignColors.primarySoft,
+    borderWidth: Layout.hairline, borderColor: DesignColors.primaryBorder,
+  },
+  bloodGroup: { fontSize: TypeScale.subtitle, fontWeight: FontWeight.bold, color: DesignColors.primaryDeep },
+  statusColumn: { flexShrink: 1, alignItems: 'flex-end', gap: Space.xs },
+  urgencyRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
+  urgencyText: { fontSize: TypeScale.caption, fontWeight: FontWeight.semibold, color: DesignColors.textMuted },
+  urgencyTextUrgent: { color: DesignColors.errorText },
+
+  factList: { gap: Space.sm },
+  factRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexWrap: 'wrap', gap: Space.sm,
+  },
+  factLabel: { fontSize: TypeScale.small, color: DesignColors.textMuted },
+  factValue: {
+    flexShrink: 1, fontSize: TypeScale.body, fontWeight: FontWeight.semibold,
+    color: DesignColors.text, textAlign: 'right',
+  },
+
+  notice: {
+    gap: Space.sm, padding: Space.md, borderRadius: Radii.lg, borderWidth: Layout.hairline,
+    borderColor: DesignColors.warningBorder, backgroundColor: DesignColors.warningSurface,
+  },
+  noticeTitle: { fontSize: TypeScale.body, fontWeight: FontWeight.bold, color: DesignColors.warning },
+  noticeText: { fontSize: TypeScale.small, lineHeight: 20, color: DesignColors.warning },
+});

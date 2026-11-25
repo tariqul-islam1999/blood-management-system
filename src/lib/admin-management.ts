@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 
 // Enable only after separate deployment, verification and activation approval.
 // All four wrappers fail closed, even when called outside the dashboard.
-export const ADMIN_MANAGEMENT_ACTIVE: boolean = false;
+export const ADMIN_MANAGEMENT_ACTIVE: boolean = true;
 export const ADMIN_MANAGEMENT_MESSAGE = 'Admin Management service not yet activated';
 
 export type AccountStatus = 'active' | 'suspended' | 'deactivated';
@@ -11,7 +11,7 @@ export type AdminListEntry = {
   user_id: string;
   full_name: string;
   account_status: AccountStatus;
-  last_action: 'appointed' | 'revoked' | null;
+  last_action: 'appointed' | 'revoked' | 'created' | null;
   last_changed_at: string | null;
 };
 export type AdminCandidate = {
@@ -118,7 +118,8 @@ function isAdminEntry(value: unknown): value is AdminListEntry {
   return isRecord(value) && isUuid(value.user_id) && typeof value.full_name === 'string' &&
     isStatus(value.account_status) &&
     ((value.last_action === null && value.last_changed_at === null) ||
-      ((value.last_action === 'appointed' || value.last_action === 'revoked') && isDate(value.last_changed_at)));
+      ((value.last_action === 'appointed' || value.last_action === 'revoked' ||
+        value.last_action === 'created') && isDate(value.last_changed_at)));
 }
 function isCandidate(value: unknown): value is AdminCandidate {
   return isRecord(value) && isUuid(value.user_id) && typeof value.full_name === 'string' &&

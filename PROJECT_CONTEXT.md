@@ -1,9 +1,11 @@
-> **Latest update — 2026-11-20 (documentation only).** Section 12 records the
-> owner-approved **Final Project Completion Work Plan (Phases 0–7, 20–30 November 2026)**.
-> Sections 1–11 are preserved unchanged as the project handoff, decision record and
-> history; the plan adds a time-boxed execution sequence and does not replace any
-> approved requirement. No source code, SQL, migration, configuration, Supabase project
-> or Git state was changed by this documentation update.
+> **Latest update — 2026-11-26 (documentation only).** Phase 2 UI redesign is complete and the
+> Admin Account Creation workflow is implemented and active in BMS-Development. A 26 November
+> progress entry records what was verified in the repository, what is owner-reported, and what
+> remains **untested** — in particular, **Admin login with the new credentials has NOT been
+> tested**. Section 12 records the owner-approved **Final Project Completion Work Plan
+> (Phases 0–7, 20–30 November 2026)**. Sections 1–11 are preserved as the project handoff,
+> decision record and history. No SQL was executed, no migration or Edge Function was deployed,
+> and no Supabase project was connected to by this documentation update.
 
 ---
 
@@ -1920,6 +1922,65 @@ Status snapshot: 2026-11-09 (deployment state updated 2026-11-10; P4.1 manually 
   notifications (P4.5), admin donation screens, and the P4.7 behavioral pgTAP suites (the structural
   suite remains an unrun draft). The Main Supabase project was not accessed.
 
+### Progress entry - 2026-11-26 (Phase 2 UI complete; Admin Account Creation implemented and active in Development)
+
+**Verified in the repository during this documentation pass**
+
+- **Phase 2 UI redesign is complete** across all four role groups. The redesign is present as
+  uncommitted work on 11 files: `src/app/(admin)/admin-dashboard.tsx`,
+  `src/app/(admin)/admin-verification.tsx`, `src/app/(beneficiary)/_layout.tsx`,
+  `src/app/(beneficiary)/beneficiary-dashboard.tsx`,
+  `src/app/(beneficiary)/create-blood-request.tsx`, `src/app/(beneficiary)/find-donors.tsx`,
+  `src/app/(beneficiary)/my-blood-requests.tsx`, `src/app/(donor)/donation-followup.tsx`,
+  `src/app/(donor)/donor-dashboard.tsx`, `src/app/(donor)/open-blood-requests.tsx` and
+  `src/app/(super-admin)/super-admin-dashboard.tsx`.
+- **Admin Account Creation is implemented** as new files:
+  `supabase/migrations/20261125000100_admin_creation.sql`,
+  `supabase/functions/admin-create/index.ts`, `src/lib/admin-creation.ts`,
+  `docs/admin-account-creation.md` and `scripts/validate-admin-creation-sql.py`.
+- **`ADMIN_MANAGEMENT_ACTIVE` is `true`** in `src/lib/admin-management.ts`. Note this single
+  constant now gates listing, candidate lookup, appointment, revocation **and** Admin creation,
+  so they cannot be enabled independently.
+- **Client-contract mismatch fixed** in `src/lib/admin-management.ts`: `AdminListEntry.last_action`
+  and the `isAdminEntry()` runtime validator now accept `'created'`. The database has emitted
+  `action = 'created'` for Admin-creation audit events since the new migration widened the action
+  CHECK, but the client still rejected any other value. Consequence before the fix:
+  `super_admin_list_admins` returned valid rows, `isAdminEntry` returned `false`, the whole result
+  set was discarded and the dashboard rendered the error state "The service returned unexpected
+  admin list data."
+- **Checks run in this pass:** `node node_modules/typescript/bin/tsc --noEmit` → exit code 0, no
+  diagnostics. `git diff --check` → exit code 0. The migration also parses cleanly against the
+  PostgreSQL 17 grammar with `pglast` 7.22 (45 statements, 6 function bodies, no syntax errors).
+
+**Owner-reported state (not independently re-verified in this pass — no SQL was executed and no
+Supabase project was connected to)**
+
+- Migration `20261125000100_admin_creation.sql` applied successfully to **BMS-Development**.
+- Edge Function `admin-create` deployed to **BMS-Development**.
+- A Super Admin successfully created a new Admin account through the UI, and the new Admin now
+  appears in the Admin Accounts card after the `last_action` contract fix.
+- The Main Supabase project was not accessed or modified.
+
+**Pending — NOT tested, must not be described as working**
+
+- **Login with the newly created Admin credentials has not been tested.** Admin login is unverified.
+- The Admin dashboard and its permissions have not been verified for the new account.
+- The Admin creation **success message disappears during the list refresh**: `submitNewAdmin`
+  sets `creationSucceeded` and then calls `load()`, whose first action is `clearPrivateData()`,
+  which resets that state. The account is created correctly; only the confirmation text is lost.
+  Fix not yet implemented.
+- Phase 3–7 of the approved work plan remain outstanding.
+
+**Known limitation carried forward:** `super_admin_list_admins` orders by
+`ORDER BY p.created_at, p.id` ascending, so with more than one page (`PAGE_SIZE = 20`) a newly
+created Admin appears on the last page rather than page 0. This is a pagination/sorting decision
+and was deliberately left unchanged.
+
+**Constraint:** this entry is documentation only. No SQL was executed, no migration or Edge
+Function was deployed, no Supabase configuration was changed, and no `.env` or credential was read.
+
+
+
 ---
 
 # 12. Final Project Completion Work Plan (20–30 November 2026)
@@ -2314,8 +2375,9 @@ These rules apply during every phase above.
 - [x] Phase 1 (21 Nov) — design system and role-based bottom navigation agreed,
       implemented, TypeScript-clean and confirmed PASS in the user's Expo Go
       navigation test sequence.
-- [ ] Phase 2 (22–24 Nov) — all four roles redesigned, screen by screen, TypeScript-clean
-      and device-checked.
+- [x] Phase 2 (22–24 Nov) — all four roles redesigned, screen by screen, TypeScript-clean
+      and device-checked. Completed; the 11 redesigned files were still uncommitted as of
+      26 November and are included in the 26 November commit.
 - [ ] Phase 3 (25 Nov) — donor donation history complete from existing data, or an
       approved migration path agreed.
 - [ ] Phase 4 (26–27 Nov) — beneficiary workflow complete, including the exact completion
@@ -2331,3 +2393,4 @@ These rules apply during every phase above.
 |---|---|
 | 2026-11-20 | Added Section 12 (owner-approved Final Project Completion Work Plan, Phases 0–7, 20–30 November 2026), a scheduling note in Section 9, and a top-of-file update banner. Sections 1–11 are preserved unchanged. No code, SQL, migration, configuration, Supabase or Git change. |
 | 2026-11-21 | Recorded Phase 1 completion (design tokens, all four role route groups, navigation preserved, TypeScript PASS, `git diff --check` PASS, user-confirmed Expo Go navigation tests), the deferred Super Admin Logout item and the Phase 2 "not started" status. Marked the Phase 1 checklist item complete. No Supabase, dependency or feature-flag change. |
+| 2026-11-26 | Recorded Phase 2 completion (11 redesigned role screens), the Admin Account Creation implementation (`20261125000100_admin_creation.sql`, `admin-create` Edge Function, `src/lib/admin-creation.ts`, `docs/admin-account-creation.md`, offline SQL validator), `ADMIN_MANAGEMENT_ACTIVE = true`, and the `last_action = 'created'` client contract fix. Marked the Phase 2 checklist item complete. Explicitly recorded that **Admin login with the new credentials is NOT tested**. Owner-reported (not re-verified here): migration applied and Edge Function deployed to BMS-Development. No SQL executed, no deployment, no Supabase connection, no `.env` read by this documentation update. |
