@@ -4,7 +4,7 @@ import { SymbolView } from 'expo-symbols';
 import { DesignColors, Layout, Space } from '../../constants/design-tokens';
 
 /**
- * Donor navigation: Home + Requests, plus two non-tab routes.
+ * Donor navigation: Home, Requests and History tabs, plus two non-tab routes.
  *
  * `active-donation` and `donation-followup` keep `href: null` so they remain
  * reachable by deep link/params but do not appear as tabs — an active donation
@@ -67,6 +67,25 @@ export default function DonorTabsLayout() {
                 ios: focused ? 'drop.fill' : 'drop',
                 android: 'bloodtype',
                 web: 'bloodtype',
+              }}
+              size={Layout.tabBarIconSize}
+              tintColor={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="donation-history"
+        options={{
+          title: 'History',
+          tabBarLabel: 'History',
+          tabBarAccessibilityLabel: 'Donation history',
+          tabBarIcon: ({ color, focused }) => (
+            <SymbolView
+              name={{
+                ios: focused ? 'clock.arrow.circlepath' : 'clock',
+                android: 'history',
+                web: 'history',
               }}
               size={Layout.tabBarIconSize}
               tintColor={color}

@@ -641,6 +641,14 @@ export default function DonorDashboard() {
               )}
             </>
           )}
+
+          {/* Reachable even while the eligibility service is gated, so the donor
+              can open Donation History and read the honest availability notice. */}
+          <AppButton
+            label="View Donation History"
+            variant="outline"
+            onPress={() => router.push('/donation-history' as Href)}
+          />
         </AppCard>
 
         <AppCard style={styles.accountCard}>

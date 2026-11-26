@@ -10,6 +10,9 @@ Status as of **2026-11-26**: implemented, and **active in BMS-Development**.
 - **NOT tested:** logging in with the newly created Admin credentials, and the resulting Admin
   dashboard/permissions. Do not describe Admin login as working.
 - The Main Supabase project was not accessed or modified.
+- **Fixed 2026-11-26 (code + typecheck only):** the success/duplicate message after Admin creation
+  no longer disappears during the list refresh — see Section 13. TypeScript and `git diff --check`
+  pass, but runtime/UI behaviour is still pending verification.
 
 ## 1. What the feature does
 
@@ -26,6 +29,10 @@ Public registration is unchanged: only Donor and Beneficiary can self-register.
 
 The feature stays disabled until `ADMIN_MANAGEMENT_ACTIVE` is set to `true` in
 `src/lib/admin-management.ts` (separate approval).
+
+> **Dated clarification (2026-11-26):** the flag is now `true`, so this paragraph describes the
+> original activation rule rather than the current state. See the status note at the end of
+> Section 10.
 
 ## 2. Why the form collects more than name/email/password
 
@@ -263,9 +270,26 @@ the safe retry path when a previous `deleteUser` call failed.
   classifies RPC failures by SQLSTATE and treats an ambiguous `createUser` failure as a plain
   failure, never as a duplicate email.
 
-**Known open issue:** the Admin creation success message is cleared during the list refresh
-(`submitNewAdmin` sets it, then `load()` calls `clearPrivateData()`, which resets it). The account
-is created correctly; only the confirmation text is lost. Not yet fixed.
+**Fixed (2026-11-26): Admin creation success message cleared by the list refresh.** The
+success/duplicate confirmation is no longer lost during the post-creation admin-list refresh.
+Root cause: `submitNewAdmin` set `creationSucceeded`, then called `load()`, whose first action was
+`clearPrivateData()`, which reset that state. The account was always created correctly; only the
+confirmation text was lost.
+
+- Fix location: `src/app/(super-admin)/super-admin-dashboard.tsx` (client only).
+- Fix: `clearPrivateData` accepts an optional `{ keepCreationResult?: boolean }` flag, and the
+  post-creation refresh calls `load(0, { keepCreationResult: true })`, so the notice survives the
+  refresh it triggers.
+- Private-data cleanup is **not** weakened: the flag defaults to off, so sign-out, focus loss,
+  session/authorization failure, unmount and the dashboard's own expired/unauthorized error path
+  still clear the notice along with the form (including the temporary password), the candidate
+  and the admin list.
+- Nothing else changed: no Admin creation API, Edge Function, SQL, RLS or permission change, and
+  loading/error/list-refresh behaviour is unchanged.
+- Checks **passed**: `node node_modules/typescript/bin/tsc --noEmit` → exit code 0, no
+  diagnostics; `git diff --check` → exit code 0.
+- **Runtime/UI verification is still pending.** The fix has not been exercised in a running app or
+  on a device/emulator/web build, so the visible success message is **not** confirmed working yet.
 
 **Known limitation:** `super_admin_list_admins` orders by `created_at` ascending, so with more than
 one page a newly created Admin appears on the last page, not page 0.

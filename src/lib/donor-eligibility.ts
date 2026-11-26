@@ -33,6 +33,32 @@ export type DonationRecord = {
   recorded_at: string;
 };
 
+/**
+ * One row of the donor's own donation history.
+ *
+ * `donated_on` is the authoritative completed date (`donor_donations.donated_on`,
+ * written by `apply_donation_ended`). The three `location_*` fields are resolved
+ * from the related `donation_engagements` -> `blood_requests` row and are `null`
+ * whenever no engagement matches; they must never be fabricated.
+ */
+export type DonationHistoryEntry = DonationRecord & {
+  location_district: string | null;
+  location_thana: string | null;
+  location_local_area: string | null;
+};
+
+/**
+ * One page of donation history plus the exact total of completed donations.
+ *
+ * `total_count` is computed by the database over all of the donor's
+ * `donor_donations` rows, so it does not depend on the page (or on whether the
+ * location could be resolved). It is never derived on the client.
+ */
+export type DonationHistoryPage = {
+  entries: DonationHistoryEntry[];
+  total_count: number;
+};
+
 export type AdminDonationCorrection = {
   donor_id: string;
   last_donation_date: string;
@@ -65,6 +91,9 @@ const isDate = (value: unknown): value is string =>
   typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value));
 const isNullableDate = (value: unknown): value is string | null =>
   value === null || isDate(value);
+const isNullableText = (value: unknown): value is string | null =>
+  value === null || typeof value === 'string';
+
 const isAvailability = (value: unknown): value is AvailabilityStatus =>
   value === 'available' || value === 'unavailable';
 const isSource = (value: unknown): value is DonationSource =>
@@ -188,6 +217,75 @@ export async function listMyDonations(limit = 20, offset = 0): Promise<DonationR
       recorded_at: row.recorded_at,
     };
   });
+}
+
+
+/**
+ * Loads one page of the authenticated donor's own donation history together with
+ * the exact total number of completed donations.
+ *
+ * Authorization is entirely server-side: the RPC always filters on `auth.uid()`
+ * and raises `42501` for a non-donor or inactive account, so no donor id is ever
+ * sent from the client and another donor's history cannot be requested.
+ *
+ * The response is validated field by field, including the page-size bound and a
+ * single consistent `total_count`, before anything reaches the UI. A missing
+ * engagement only means `null` location fields — it never removes a donation.
+ */
+export async function listMyDonationHistory(
+  pageSize = 20,
+  pageOffset = 0,
+): Promise<DonationHistoryPage> {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50 ||
+      !Number.isInteger(pageOffset) || pageOffset < 0 || pageOffset > 100000) {
+    throw new DonorEligibilityError('invalid', 'Invalid donation history pagination.');
+  }
+  requireActivation();
+  const { data, error } = await supabase.rpc('donor_list_donation_history', {
+    p_page_size: pageSize,
+    p_page_offset: pageOffset,
+  });
+  if (error) throw rpcError(error);
+  const rows: unknown = data;
+  if (!Array.isArray(rows) || rows.length > pageSize) {
+    throw new DonorEligibilityError('request',
+      'The donation service returned unexpected history data.');
+  }
+  const entries: DonationHistoryEntry[] = rows.map((row) => {
+    if (!isRecord(row) || !isUuid(row.donation_id) || !isDate(row.donated_on) ||
+        !(row.note === null || typeof row.note === 'string') ||
+        !isSource(row.source) || typeof row.recorded_at !== 'string' ||
+        !isNullableText(row.location_district) ||
+        !isNullableText(row.location_thana) ||
+        !isNullableText(row.location_local_area) ||
+        typeof row.total_count !== 'number' || !Number.isInteger(row.total_count) ||
+        row.total_count < 0) {
+      throw new DonorEligibilityError('request',
+        'The donation service returned unexpected history data.');
+    }
+    return {
+      donation_id: row.donation_id,
+      donated_on: row.donated_on,
+      note: row.note,
+      source: row.source,
+      recorded_at: row.recorded_at,
+      location_district: row.location_district,
+      location_thana: row.location_thana,
+      location_local_area: row.location_local_area,
+    };
+  });
+  // The total must agree across the page; a mismatch means inconsistent data.
+  const totals = new Set((rows as Array<Record<string, unknown>>).map((row) => row.total_count));
+  if (totals.size > 1) {
+    throw new DonorEligibilityError('request',
+      'The donation service returned unexpected history data.');
+  }
+  const totalCount = totals.size === 0 ? 0 : Number([...totals][0]);
+  if (totalCount === 0 && entries.length > 0) {
+    throw new DonorEligibilityError('request',
+      'The donation service returned unexpected history data.');
+  }
+  return { entries, total_count: totalCount };
 }
 
 

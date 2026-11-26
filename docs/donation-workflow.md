@@ -93,7 +93,7 @@ authoritative text.
 | `docs/donor-donation-eligibility.md` | Eligibility rules, donation history, objects | "Approved decisions implemented" (`:27-37`); "Objects" (`:39-67`); "Existing functions replaced" + "M7 changes" (`:69-82`); "Security model" (`:84-91`); "Ordering and dependencies" (`:93-100`); "Known risks / limitations" (`:165-188`) |
 | `supabase/migrations/20261027000100_donor_donation_eligibility.sql` | Implemented eligibility/history objects | `donor_donations` table; helpers `bms_local_date`, `donor_next_eligible_date`, `donor_is_eligible`, `refresh_eligible_donor_availability`; `apply_donation_ended` (`:198-292`) |
 | `supabase/migrations/20261028000100_blood_request_management.sql` | Implemented request/interest objects | `blood_requests` (`:73-90`); `blood_request_interests` (`:92-101`); `beneficiary_*` RPCs; `donor_list_open_blood_requests` (`:164-180`); `donor_express_interest` (`:182-204`) |
-| `src/lib/blood-requests.ts`, `src/lib/donor-eligibility.ts` | Client activation flags and wrappers | `BLOOD_REQUEST_SERVICE_ACTIVE = false` (`blood-requests.ts:5`); `DONOR_ELIGIBILITY_SERVICE_ACTIVE = false` (`donor-eligibility.ts:7`) |
+| `src/lib/blood-requests.ts`, `src/lib/donor-eligibility.ts` | Client activation flags and wrappers | `BLOOD_REQUEST_SERVICE_ACTIVE = true` (`blood-requests.ts:5`); `DONOR_ELIGIBILITY_SERVICE_ACTIVE = false` (`donor-eligibility.ts:7`) — see the dated clarification in Section 11.2 |
 | `src/app/open-blood-requests.tsx`, `src/app/donor-dashboard.tsx`, `src/app/beneficiary-dashboard.tsx`, `src/app/admin-dashboard.tsx` | Current UI surfaces | — |
 
 **Missing source document:** the approved **Project Proposal** and **SRS**. See Section 13.
@@ -527,6 +527,23 @@ Verified read-only against commit `2f69ff2b849e127288f42b71babbf1056ae8903a`.
 - **Frontend activation gates remain `false`:** `BLOOD_REQUEST_SERVICE_ACTIVE = false`
   (`src/lib/blood-requests.ts:5`) and `DONOR_ELIGIBILITY_SERVICE_ACTIVE = false`
   (`src/lib/donor-eligibility.ts:7`).
+
+> **Dated clarification (2026-11-26).** The bullets above record the state at the commit
+> named in Section 11 (`2f69ff2`). Several are now out of date and the earlier text is kept
+> as history:
+>
+> - `BLOOD_REQUEST_SERVICE_ACTIVE` is **`true`** in `src/lib/blood-requests.ts:5`; it was enabled
+>   for controlled Development device testing.
+> - `DONATION_WORKFLOW_SERVICE_ACTIVE` is **`true`** in `src/lib/donation-workflow.ts:7`; the P4
+>   lifecycle RPCs (`20261030000100`) are deployed and the donor flow was device-tested through
+>   `reached_home_safely`.
+> - `DONOR_ELIGIBILITY_SERVICE_ACTIVE` remains **`false`** in `src/lib/donor-eligibility.ts:7`.
+>   Phase 3 (Donor Donation History) was runtime-tested with it **temporarily** enabled and it was
+>   then restored to `false`. See the Phase 3 completion record in `PROJECT_CONTEXT.md`.
+> - The "Not implemented" items in Section 11.2 (status machine, feeling capture, home-safely,
+>   follow-up, status-event audit) were implemented by the P4.1/P4.2 migrations; they are not
+>   listed as gaps any more. Realtime live status (P4.3/P4.4) and notifications (P4.5) remain
+>   **not implemented**.
 
 ### 11.3 Deployment/runtime caveats (A)
 

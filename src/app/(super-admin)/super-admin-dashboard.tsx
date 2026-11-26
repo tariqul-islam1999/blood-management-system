@@ -79,7 +79,11 @@ export default function SuperAdminDashboard() {
   const busy = useRef(false);
   const caller = useRef<string | null>(null);
 
-  const clearPrivateData = useCallback(() => {
+  // `keepCreationResult` is used only by the list refresh that runs right after a
+  // successful Admin creation, so the confirmation stays visible. Every other
+  // caller (logout, focus loss, authorization failure, unmount) keeps the default
+  // and still clears the notice along with the form data.
+  const clearPrivateData = useCallback((options?: { keepCreationResult?: boolean }) => {
     setAdmins([]);
     setCandidate(null);
     setTargetId('');
@@ -96,15 +100,18 @@ export default function SuperAdminDashboard() {
     });
     setCreationErrors({});
     setCreationMessage('');
-    setCreationSucceeded('');
+    if (!options?.keepCreationResult) setCreationSucceeded('');
     busy.current = false;
     caller.current = null;
   }, []);
 
-  const load = useCallback(async (requestedPage = 0) => {
+  const load = useCallback(async (
+    requestedPage = 0,
+    options?: { keepCreationResult?: boolean },
+  ) => {
     const request = ++generation.current;
     const current = () => focused.current && request === generation.current;
-    clearPrivateData();
+    clearPrivateData(options);
     setAuthorized(false);
     setState('loading');
     setMessage('');
@@ -312,8 +319,9 @@ export default function SuperAdminDashboard() {
           : `Admin account created (${result.target_user_id}).`,
       );
       resetNewAdmin();
-      // Refresh authoritative data so the new Admin appears in the list.
-      await load();
+      // Refresh authoritative data so the new Admin appears in the list. The
+      // refresh must not wipe the success notice it was triggered after.
+      await load(0, { keepCreationResult: true });
     } catch (error) {
       if (!current()) return;
       const failure = error instanceof AdminCreationError ? error

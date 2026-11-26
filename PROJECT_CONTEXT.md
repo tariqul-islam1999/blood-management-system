@@ -1,9 +1,12 @@
-> **Latest update — 2026-11-26 (documentation only).** Phase 2 UI redesign is complete and the
-> Admin Account Creation workflow is implemented and active in BMS-Development. A 26 November
-> progress entry records what was verified in the repository, what is owner-reported, and what
-> remains **untested** — in particular, **Admin login with the new credentials has NOT been
-> tested**. Section 12 records the owner-approved **Final Project Completion Work Plan
-> (Phases 0–7, 20–30 November 2026)**. Sections 1–11 are preserved as the project handoff,
+> **Latest update — 2026-11-26 (documentation only).** Phases 2 and 3 are complete. Phase 3
+> (Donor Donation History) is recorded as **COMPLETE** with documented non-blocking verification
+> gaps — the migration was applied manually in BMS-Development and two distinct donor accounts were
+> runtime-verified, while zero-history, >20-record pagination, location fallback, error/Retry,
+> non-donor rejection and direct catalogue/ACL checks remain **NOT TESTED**. The Admin Account
+> Creation workflow is implemented and active in BMS-Development, and a 26 November progress entry
+> records that **Admin login with the new credentials has NOT been tested**. Section 12 records the
+> owner-approved **Final Project Completion Work Plan (Phases 0–7, 20–30 November 2026)**; the next
+> phase is the already-approved Phase 4. Sections 1–11 are preserved as the project handoff,
 > decision record and history. No SQL was executed, no migration or Edge Function was deployed,
 > and no Supabase project was connected to by this documentation update.
 
@@ -47,8 +50,8 @@ BMS aims to make the process easier by providing a centralized platform for dono
 
 | Category | Technology | Version / Details |
 |---|---|---|
-| Frontend | React Native | Version UNKNOWN - needs to be checked in the code |
-| Framework | Expo | SDK 57 was used when the project was created |
+| Frontend | React Native | 0.88.0 (`package.json`) |
+| Framework | Expo | SDK 58 (`expo ~58.0.19`, `expo-router ~58.0.26`) |
 | Language | TypeScript | Used throughout the application |
 | Navigation | Expo Router | File-based routing |
 | Backend | Supabase | PostgreSQL database and authentication |
@@ -66,8 +69,14 @@ BMS aims to make the process easier by providing a centralized platform for dono
 ### Important Version Notes
 
 - Expo SDK 57 was used during project creation.
+  **Dated clarification (2026-11-26):** `package.json` now pins `expo ~58.0.19`,
+  `expo-router ~58.0.26` and `react-native 0.88.0`, so the project runs on **SDK 58**. The
+  original SDK 57 note records the creation state only.
 - Node.js v22.14.0 was installed.
 - Exact React Native, Expo Router, Supabase JS, and TypeScript package versions are UNKNOWN - needs to be checked in the code.
+  **Dated clarification (2026-11-26):** `react-native 0.88.0` and `expo-router ~58.0.26` are now
+  recorded in the table above from `package.json`; Supabase JS and TypeScript versions were not
+  re-checked by this pass.
 - The Supabase project was reported to use the free plan and Singapore region. Confirm this before future deployment work.
 
 ## Local Project Location
@@ -1965,11 +1974,30 @@ Supabase project was connected to)**
 
 - **Login with the newly created Admin credentials has not been tested.** Admin login is unverified.
 - The Admin dashboard and its permissions have not been verified for the new account.
-- The Admin creation **success message disappears during the list refresh**: `submitNewAdmin`
-  sets `creationSucceeded` and then calls `load()`, whose first action is `clearPrivateData()`,
-  which resets that state. The account is created correctly; only the confirmation text is lost.
-  Fix not yet implemented.
 - Phase 3–7 of the approved work plan remain outstanding.
+
+**Fixed — Admin creation success message lost during the list refresh (2026-11-26)**
+
+- Former issue: `submitNewAdmin` set `creationSucceeded` and then called `load()`, whose first
+  action was `clearPrivateData()`, which reset that state. The account was created correctly; only
+  the confirmation text was lost.
+- Fixed in `src/app/(super-admin)/super-admin-dashboard.tsx` (client only): `clearPrivateData`
+  accepts an optional `{ keepCreationResult?: boolean }` flag, and the post-creation refresh calls
+  `load(0, { keepCreationResult: true })`, so the success/duplicate notice survives the refresh it
+  triggers.
+- Private-data cleanup is not weakened. The flag defaults to off, so sign-out, focus loss,
+  session/authorization failure, unmount and the dashboard's own expired/unauthorized error path
+  still clear the notice together with the form (including the temporary password), the candidate
+  and the admin list.
+- No Admin creation API, Edge Function, SQL, RLS or permission change; loading, error and
+  list-refresh behaviour are unchanged.
+- **Checks passed:** `node node_modules/typescript/bin/tsc --noEmit` → exit code 0, no diagnostics.
+  `git diff --check` → exit code 0.
+- **Runtime/UI verification is still pending.** The fix has not been exercised in a running app, so
+  the visible success message must not yet be described as confirmed working.
+- `ADMIN_MANAGEMENT_ACTIVE` was re-checked in `src/lib/admin-management.ts` and is still `true`
+  (`export const ADMIN_MANAGEMENT_ACTIVE: boolean = true;`), identical to the committed state. The
+  value was not changed by this fix or by this documentation update.
 
 **Known limitation carried forward:** `super_admin_list_admins` orders by
 `ORDER BY p.created_at, p.id` ascending, so with more than one page (`PAGE_SIZE = 20`) a newly
@@ -2107,6 +2135,11 @@ bottom tab, following the same pattern as `(admin)`, `(donor)` and
 - **Admins** — *not yet a separate destination.* Admin list, candidate lookup,
   appointment and revocation are cards inside the Home screen, not their own route.
   They remain disabled while `ADMIN_MANAGEMENT_ACTIVE` is `false`.
+
+> **Dated clarification (2026-11-26):** this bullet records the 21 November state. The flag is
+> now `true` in `src/lib/admin-management.ts`, so admin listing, candidate lookup, appointment,
+> revocation and Admin creation are enabled. The "Admins" tab is still not a separate route —
+> those controls remain cards inside the Super Admin Home screen, as described above.
 - **Users** — **pending.** No Users screen, service wrapper or RPC exists.
 - **Settings** — **pending.** No Settings screen exists.
 
@@ -2217,6 +2250,92 @@ Then:
 - Never fabricate data and never show duplicate records.
 - A donor may access **only their own** history; enforce this in backend authorization,
   not in the UI alone.
+
+#### Phase 3 completion record — COMPLETE (26 November 2026)
+
+Phase 3 is **COMPLETE** under the approved project scope. Documentation only: no code, SQL,
+configuration or feature-flag change was made by this record.
+
+**Implemented**
+
+- **Migration** `supabase/migrations/20261126000100_donor_donation_history.sql` — one additive,
+  read-only RPC. No table, column, constraint, index, trigger, policy or write path is added or
+  modified; `apply_donation_ended`, `donor_end_donation`, `list_my_donations` and the P4 lifecycle
+  RPCs are untouched.
+- **RPC** `public.donor_list_donation_history(p_page_size integer DEFAULT 20, p_page_offset
+  integer DEFAULT 0)` — `SECURITY DEFINER`, `search_path = ''`, `lock_timeout = '5s'`, owned by
+  `postgres`, `EXECUTE` granted to `authenticated` only, with a fail-closed post-grant
+  `aclexplode` guard. Returns per-row `donation_id, donated_on, note, source, recorded_at,
+  location_district, location_thana, location_local_area` plus `total_count`.
+- **Data source** — completed donations are `donor_donations` rows (single writer
+  `apply_donation_ended`). `total_count` is `count(*)` over the caller's own rows, so it is the
+  exact total and is not derived from the page. No duplicate source of truth.
+- **Authorization** — the RPC takes no donor-id parameter; every predicate uses `auth.uid()`,
+  and a non-donor or inactive account is rejected with `42501`.
+- **Location** — resolved through the existing `donation_engagements -> blood_requests`
+  relationship. A location is returned only when exactly one completed engagement matches the
+  donor and Bangladesh calendar date; zero or multiple matches return `NULL`, and the history row
+  is still listed and counted.
+- **Service** — `listMyDonationHistory()` plus `DonationHistoryEntry` / `DonationHistoryPage`
+  types in `src/lib/donor-eligibility.ts`, following the existing fail-closed validation pattern.
+- **UI** — `src/app/(donor)/donation-history.tsx` (total, per-entry date and location, loading,
+  empty and error states, design-token styling) and a visible **History** bottom tab in
+  `src/app/(donor)/_layout.tsx`, with the Dashboard "View Donation History" entry point.
+
+**Verified (user-reported runtime testing)**
+
+- The user **manually applied the migration in BMS-Development** and reported successful
+  execution.
+- **DONOR-1 and DONOR-2 are two distinct login accounts.** Both displayed their expected donation
+  history — count, dates and locations — and the user manually verified those values.
+- The **History bottom tab** and the **Dashboard -> Donation History** navigation path were
+  manually verified.
+- `DONOR_ELIGIBILITY_SERVICE_ACTIVE` was **temporarily enabled** for testing and then **restored
+  to `false`**. The flag is `false` in the current working tree and was not changed by this
+  documentation record.
+- `node node_modules/typescript/bin/tsc --noEmit` -> exit code 0. `git diff --check` -> exit code 0.
+- Static migration review (structure, prerequisites, PG-17 compatibility, ownership, grants,
+  `aclexplode` guard, window-count location logic) and post-migration code verification
+  (client RPC name/parameter names, response-shape validation, pagination and `total_count`
+  handling) passed.
+
+**NOT TESTED — non-blocking**
+
+The following were **not** exercised at runtime. They are recorded as unverified, not as passing,
+and they do not block Phase 3 closure under the current approved scope:
+
+- **Zero-history donor runtime state.** No account with zero `donor_donations` rows was available
+  for testing; the empty-state branch is unproven at runtime.
+- **Pagination / Load more with more than 20 records.** No donor has more than one page of
+  history. The four-month rule makes more than 20 organic donations arithmetically impossible in
+  the project timeframe, so the `Load more` control and the empty-appended-page guard are
+  unexercised.
+- **Missing or ambiguous location rendering (`—`).** Both tested donors had exactly one matching
+  engagement per row, so the fallback path was never displayed. Producing an ambiguous case needs
+  an admin date correction, which is a write operation.
+- **Error and Retry runtime behaviour.** No forced-failure test (for example offline mode) was
+  recorded, so the error branch and the Retry action are unproven at runtime.
+- **Non-donor access rejection at runtime.** The UI prevents beneficiary/admin accounts from
+  reaching the screen, so the server-side `42501` path was not observed. The guard is present in
+  the migration, but the deployed function body was not invoked as a non-donor.
+- **Direct database catalogue/ACL verification.** `prosecdef`, `proconfig`, `proacl` and the
+  migration-history row were not read from BMS-Development. No SQL was executed by this record.
+  The post-grant guard runs in the same transaction, so a successful apply implies the ACL
+  assertion passed, but that is inference rather than direct observation.
+- **Stronger isolation testing beyond the two distinct donor accounts.** Two distinct accounts
+  each seeing only their own rows is meaningful evidence, but there is no third-account matrix,
+  no cross-account negative assertion recorded as a test, and no automated (pgTAP) coverage.
+
+**Closure statement.** These limitations are consistent with the rest of the project: no pgTAP
+suite has ever been executed anywhere (Section 9), and equivalent runtime gaps are already
+recorded for M5, M6, M7, the eligibility feature, P4.1/P4.2 and Admin creation. Phase 3 therefore
+closes as **COMPLETE with documented non-blocking verification gaps**. This must not be read as
+complete verification or 100% test coverage.
+
+**Next phase.** The next step is the already-approved **Phase 4 — 26–27 November: Beneficiary
+workflow completion**, recorded immediately below. No new scope is introduced and no completed
+decision is reopened by this record. Phase 4 implementation is **not** started by this
+documentation closure.
 
 ## Phase 4 — 26–27 November: Beneficiary workflow completion
 
@@ -2378,8 +2497,13 @@ These rules apply during every phase above.
 - [x] Phase 2 (22–24 Nov) — all four roles redesigned, screen by screen, TypeScript-clean
       and device-checked. Completed; the 11 redesigned files were still uncommitted as of
       26 November and are included in the 26 November commit.
-- [ ] Phase 3 (25 Nov) — donor donation history complete from existing data, or an
-      approved migration path agreed.
+- [x] Phase 3 (25 Nov) — donor donation history implemented via the additive
+      `20261126000100_donor_donation_history.sql` RPC, the `donor-eligibility`
+      service wrapper and the Donation History screen with a History bottom tab.
+      User applied the migration in BMS-Development, verified two distinct donor
+      accounts (DONOR-1, DONOR-2), and confirmed navigation; TypeScript and
+      `git diff --check` PASS. Recorded as COMPLETE with documented non-blocking
+      verification gaps (see the Phase 3 completion record).
 - [ ] Phase 4 (26–27 Nov) — beneficiary workflow complete, including the exact completion
       message at `reached_home_safely`.
 - [ ] Phase 5 (28 Nov) — full donor lifecycle verified with all approved rules preserved.
@@ -2394,3 +2518,5 @@ These rules apply during every phase above.
 | 2026-11-20 | Added Section 12 (owner-approved Final Project Completion Work Plan, Phases 0–7, 20–30 November 2026), a scheduling note in Section 9, and a top-of-file update banner. Sections 1–11 are preserved unchanged. No code, SQL, migration, configuration, Supabase or Git change. |
 | 2026-11-21 | Recorded Phase 1 completion (design tokens, all four role route groups, navigation preserved, TypeScript PASS, `git diff --check` PASS, user-confirmed Expo Go navigation tests), the deferred Super Admin Logout item and the Phase 2 "not started" status. Marked the Phase 1 checklist item complete. No Supabase, dependency or feature-flag change. |
 | 2026-11-26 | Recorded Phase 2 completion (11 redesigned role screens), the Admin Account Creation implementation (`20261125000100_admin_creation.sql`, `admin-create` Edge Function, `src/lib/admin-creation.ts`, `docs/admin-account-creation.md`, offline SQL validator), `ADMIN_MANAGEMENT_ACTIVE = true`, and the `last_action = 'created'` client contract fix. Marked the Phase 2 checklist item complete. Explicitly recorded that **Admin login with the new credentials is NOT tested**. Owner-reported (not re-verified here): migration applied and Edge Function deployed to BMS-Development. No SQL executed, no deployment, no Supabase connection, no `.env` read by this documentation update. |
+| 2026-11-26 | Recorded the Admin creation success-message fix in `src/app/(super-admin)/super-admin-dashboard.tsx` (`clearPrivateData`/`load` accept an optional `keepCreationResult` flag used only by the post-creation refresh) and replaced the former "fix not yet implemented" known-issue entry. Cleanup on logout/focus loss/session change is unchanged. TypeScript and `git diff --check` PASS; runtime/UI verification of the visible message is still pending. `ADMIN_MANAGEMENT_ACTIVE` re-checked and still `true` (unchanged). Documentation only: no code, SQL, deployment, Supabase connection, `.env` read or Git action. |
+| 2026-11-26 | **Phase 3 (Donor Donation History) closed as COMPLETE.** Recorded the additive `20261126000100_donor_donation_history.sql` RPC, the `listMyDonationHistory()` service wrapper, the `donation-history` screen and the new History bottom tab. Owner-reported: migration applied manually in BMS-Development. User-verified: two distinct donor accounts (DONOR-1, DONOR-2) with manually checked count/date/location, plus the History tab and Dashboard navigation; `DONOR_ELIGIBILITY_SERVICE_ACTIVE` temporarily enabled then restored to `false`; TypeScript and `git diff --check` PASS. Explicitly recorded as **NOT TESTED (non-blocking)**: zero-history state, >20-record pagination, missing/ambiguous location rendering, error/Retry behaviour, non-donor `42501` rejection, direct catalogue/ACL inspection, and stronger isolation testing. No code, SQL, migration, flag, configuration or Supabase change by this documentation pass. |
